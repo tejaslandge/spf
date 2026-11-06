@@ -3,6 +3,7 @@
 use App\Services\Security\SessionService;
 use App\Support\SessionDevice;
 use Flux\Flux;
+use Illuminate\Support\Facades\Hash;
 use Laravel\Fortify\Actions\DisableTwoFactorAuthentication;
 use Laravel\Fortify\Features;
 use Laravel\Fortify\Fortify;
@@ -49,10 +50,23 @@ new #[Title('Security')] class extends Component {
     public array $sessions = [];
 
     /**
+     * Whether the current session has recently confirmed the account password.
+     */
+    #[Locked]
+    public bool $passwordConfirmed = false;
+
+    /**
+     * The password entered in the inline confirmation form.
+     */
+    public string $confirmPassword = '';
+
+    /**
      * Mount the component.
      */
     public function mount(DisableTwoFactorAuthentication $disableTwoFactorAuthentication): void
     {
+        $this->passwordConfirmed = $this->hasConfirmedPassword();
+
         /* @chisel-2fa */
         $this->canManageTwoFactor = Features::canManageTwoFactorAuthentication();
 
@@ -75,6 +89,48 @@ new #[Title('Security')] class extends Component {
         /* @end-chisel-passkeys */
 
         $this->loadSessions();
+    }
+
+    /**
+     * Determine whether the password was confirmed inside the allowed window.
+     */
+    private function hasConfirmedPassword(): bool
+    {
+        $confirmedAt = (int) session('auth.password_confirmed_at', 0);
+
+        return $confirmedAt > 0 && (time() - $confirmedAt) <= 10800;
+    }
+
+    /**
+     * Confirm the account password without leaving the Security page.
+     */
+    public function confirmIdentity(): void
+    {
+        $validated = $this->validate([
+            'confirmPassword' => ['required', 'string'],
+        ]);
+
+        if (! Hash::check((string) $validated['confirmPassword'], auth()->user()->password)) {
+            $this->addError('confirmPassword', __('The provided password is incorrect.'));
+
+            return;
+        }
+
+        session(['auth.password_confirmed_at' => time()]);
+
+        $this->passwordConfirmed = true;
+        $this->confirmPassword = '';
+        $this->resetErrorBag('confirmPassword');
+
+        Flux::toast(variant: 'success', text: __('Identity confirmed.'));
+    }
+
+    /**
+     * Abort when a sensitive action is attempted before confirmation.
+     */
+    private function ensurePasswordConfirmed(): void
+    {
+        abort_unless($this->hasConfirmedPassword(), 403);
     }
 
     /**
@@ -106,6 +162,8 @@ new #[Title('Security')] class extends Component {
      */
     public function revokeSession(string $sessionId): void
     {
+        $this->ensurePasswordConfirmed();
+
         if (app(SessionService::class)->revoke($sessionId, auth()->user())) {
             $this->loadSessions();
 
@@ -122,6 +180,8 @@ new #[Title('Security')] class extends Component {
      */
     public function revokeOtherSessions(): void
     {
+        $this->ensurePasswordConfirmed();
+
         $count = app(SessionService::class)->revokeOthers(auth()->user());
 
         $this->loadSessions();
@@ -154,6 +214,8 @@ new #[Title('Security')] class extends Component {
      */
     public function confirmDelete(int $passkeyId): void
     {
+        $this->ensurePasswordConfirmed();
+
         $passkey = auth()->user()->passkeys()->findOrFail($passkeyId);
 
         $this->deletingPasskeyId = $passkey->id;
@@ -166,6 +228,8 @@ new #[Title('Security')] class extends Component {
      */
     public function deletePasskey(DeletePasskey $deletePasskey): void
     {
+        $this->ensurePasswordConfirmed();
+
         if (! $this->deletingPasskeyId) {
             return;
         }
@@ -204,6 +268,8 @@ new #[Title('Security')] class extends Component {
      */
     public function disable(DisableTwoFactorAuthentication $disableTwoFactorAuthentication): void
     {
+        $this->ensurePasswordConfirmed();
+
         $disableTwoFactorAuthentication(auth()->user());
 
         $this->twoFactorEnabled = false;
@@ -234,6 +300,11 @@ new #[Title('Security')] class extends Component {
                 <span>{{ session('status') }}</span>
             </div>
         @endif
+
+        @if (! $passwordConfirmed)
+            {{-- Confirmation happens inline so the URL and sidebar never change. --}}
+            @include('pages.settings.partials.confirm-identity')
+        @else
 
         {{-- Account security overview --}}
         <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -456,6 +527,7 @@ new #[Title('Security')] class extends Component {
             </div>
         @endif
         {{-- @end-chisel-passkeys --}}
+        @endif
     </x-pages::settings.layout>
 
     {{-- @chisel-passkeys --}}

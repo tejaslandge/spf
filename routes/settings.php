@@ -20,10 +20,9 @@ Route::middleware(['auth'])->group(function () {
 });
 
 Route::middleware(['auth', 'verified'])->group(function () {
+    // Password confirmation is handled inline inside the Livewire component so
+    // the settings layout and URL stay exactly where the user already is.
     Route::livewire('settings/security', 'pages::settings.security')
-        ->middleware([
-            'password.confirm',
-        ])
         ->name('security.edit');
 });
 

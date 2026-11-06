@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Support\Facades\Hash;
 use Laravel\Fortify\Features;
 use Livewire\Livewire;
 
@@ -31,13 +32,43 @@ test('security settings page can be rendered', function () {
     $response->assertSee('Enable 2FA');
 });
 
-test('security settings page requires password confirmation when enabled', function () {
+test('security settings page asks for password confirmation inline', function () {
     $user = User::factory()->create();
 
     $response = $this->actingAs($user)
         ->get(route('security.edit'));
 
-    $response->assertRedirect(route('password.confirm'));
+    $response->assertOk()
+        ->assertSee('Confirm your identity')
+        ->assertDontSee('Active sessions');
+});
+
+test('the security page unlocks inline with the correct password', function () {
+    $user = User::factory()->create(['password' => Hash::make('password')]);
+
+    $this->actingAs($user);
+
+    Livewire::test('pages::settings.security')
+        ->assertSet('passwordConfirmed', false)
+        ->set('confirmPassword', 'password')
+        ->call('confirmIdentity')
+        ->assertSet('passwordConfirmed', true)
+        ->assertHasNoErrors()
+        ->assertSee('Active sessions');
+
+    expect(session('auth.password_confirmed_at'))->not->toBeNull();
+});
+
+test('an incorrect password keeps the security page locked', function () {
+    $user = User::factory()->create(['password' => Hash::make('password')]);
+
+    $this->actingAs($user);
+
+    Livewire::test('pages::settings.security')
+        ->set('confirmPassword', 'not-the-password')
+        ->call('confirmIdentity')
+        ->assertSet('passwordConfirmed', false)
+        ->assertHasErrors('confirmPassword');
 });
 
 test('security settings page renders without two factor when feature is disabled', function () {
