@@ -75,6 +75,14 @@ final class SettingsRegistry
             'loan.penalty_grace_days' => ['group' => self::GROUP_LOAN, 'type' => 'integer', 'default' => 0, 'label' => 'Penalty grace period (days)'],
             'loan.penalty_max_amount' => ['group' => self::GROUP_LOAN, 'type' => 'decimal', 'default' => null, 'label' => 'Maximum penalty amount'],
 
+            // Foreclosure settings.
+            'loan.foreclosure_charges_enabled' => ['group' => self::GROUP_LOAN, 'type' => 'boolean', 'default' => false, 'label' => 'Enable foreclosure charges'],
+            'loan.foreclosure_charge_type' => ['group' => self::GROUP_LOAN, 'type' => 'string', 'default' => 'fixed', 'label' => 'Foreclosure charge type'],
+            'loan.foreclosure_charge_value' => ['group' => self::GROUP_LOAN, 'type' => 'decimal', 'default' => '0', 'label' => 'Foreclosure charge value'],
+            'loan.foreclosure_charge_minimum' => ['group' => self::GROUP_LOAN, 'type' => 'decimal', 'default' => '0', 'label' => 'Minimum foreclosure charge'],
+            'loan.foreclosure_charge_maximum' => ['group' => self::GROUP_LOAN, 'type' => 'decimal', 'default' => null, 'label' => 'Maximum foreclosure charge'],
+            'loan.foreclosure_effective_from' => ['group' => self::GROUP_LOAN, 'type' => 'date', 'default' => null, 'label' => 'Foreclosure charges effective from'],
+
             // Investor settings.
             'investor.min_investment' => ['group' => self::GROUP_INVESTOR, 'type' => 'decimal', 'default' => '0', 'label' => 'Minimum investment amount'],
             'investor.max_investment' => ['group' => self::GROUP_INVESTOR, 'type' => 'decimal', 'default' => null, 'label' => 'Maximum investment amount'],

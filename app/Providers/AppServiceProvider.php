@@ -42,6 +42,7 @@ class AppServiceProvider extends ServiceProvider
 
         Gate::before(fn ($user) => $user->isSuperAdmin() ? true : null);
         Gate::policy(Loan::class, LoanDistributionPolicy::class);
+        Gate::policy(ForeclosureRequest::class, ForeclosurePolicy::class);
     }
 
     /**

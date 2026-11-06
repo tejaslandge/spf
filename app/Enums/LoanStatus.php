@@ -7,6 +7,7 @@ enum LoanStatus: string
     case Pending = 'pending';
     case Active = 'active';
     case Closed = 'closed';
+    case Foreclosed = 'foreclosed';
 
     public function label(): string
     {
@@ -14,6 +15,7 @@ enum LoanStatus: string
             self::Pending => 'Pending',
             self::Active => 'Active',
             self::Closed => 'Closed',
+            self::Foreclosed => 'Foreclosed',
         };
     }
 
@@ -23,6 +25,7 @@ enum LoanStatus: string
             self::Pending => 'amber',
             self::Active => 'blue',
             self::Closed => 'emerald',
+            self::Foreclosed => 'rose',
         };
     }
 
@@ -30,8 +33,9 @@ enum LoanStatus: string
     {
         return match ($this) {
             self::Pending => $status === self::Active,
-            self::Active => $status === self::Closed,
+            self::Active => $status === self::Closed || $status === self::Foreclosed,
             self::Closed => false,
+            self::Foreclosed => false,
         };
     }
 

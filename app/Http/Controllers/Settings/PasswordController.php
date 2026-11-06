@@ -15,6 +15,7 @@ class PasswordController extends Controller
     public function __construct(
         private readonly PasswordPolicyService $policy,
         private readonly SessionService $sessions,
+        private readonly EmailNotificationService $emailService
     ) {}
 
     /**
@@ -41,6 +42,14 @@ class PasswordController extends Controller
         }
 
         AuditLogger::log('password.changed', $user, [], ['role' => $user->role->value]);
+
+        // Send password changed notification email
+        try {
+            $this->emailService->passwordChanged($user, 'account settings', false);
+        } catch (\Throwable $e) {
+            // Log the failure but don't block the password change
+            Log::warning('Failed to send password changed email: '.$e->getMessage());
+        }
 
         return redirect()
             ->route('security.edit')

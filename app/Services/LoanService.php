@@ -28,6 +28,7 @@ class LoanService
         private readonly InterestDistributionService $distribution,
         private readonly GuarantorService $guarantorService,
         private readonly StaffNotifier $notifier,
+        private readonly ForeclosureService $foreclosureService,
     ) {}
 
     /**
@@ -305,5 +306,46 @@ class LoanService
         ])->save();
 
         return $loan;
+    }
+
+    public function foreclose(Loan $loan, User $actor, ?string $effectiveDate = null): ForeclosureRequest
+    {
+        // Get foreclosure settings from config
+        $settings = app(SettingsService::class);
+
+        $foreclosureChargesEnabled = $settings->getBool('loan.foreclosure_charges_enabled', false);
+        $foreclosureChargeType = $settings->get('loan.foreclosure_charge_type', 'fixed');
+        $foreclosureChargeValue = $settings->getDecimal('loan.foreclosure_charge_value', '0');
+        $foreclosureChargeMinimum = $settings->getDecimal('loan.foreclosure_charge_minimum', '0');
+        $foreclosureChargeMaximum = $settings->get('loan.foreclosure_charge_maximum', null);
+        $effectiveFrom = $settings->get('loan.foreclosure_effective_from', null);
+
+        $inputs = [
+            'foreclosure_effective_date' => $effectiveDate ?? now()->toDateString(),
+            'foreclosure_charges_enabled' => $foreclosureChargesEnabled,
+            'foreclosure_charge_type' => $foreclosureChargeType,
+            'foreclosure_charge_value' => $foreclosureChargeValue,
+            'foreclosure_charge_minimum' => $foreclosureChargeMinimum,
+            'foreclosure_charge_maximum' => $foreclosureChargeMaximum,
+            'effective_from_date' => $effectiveFrom,
+        ];
+
+        // Record the foreclosure request
+        $request = $this->foreclosureService->recordRequest($loan, $actor, $inputs);
+
+        // Calculate the foreclosure amount
+        $calculation = $this->foreclosureService->calculateForeclosureAmount($loan, $inputs);
+
+        // Update the request with the calculation results
+        $request->forceFill([
+            'outstanding_principal' => $calculation->outstanding_principal,
+            'accrued_interest' => $calculation->accrued_interest,
+            'other_outstanding_dues' => $calculation->other_outstanding_dues,
+            'foreclosure_charges' => $calculation->foreclosure_charges,
+            'total_settlement' => $calculation->total_settlement,
+            'eligible_adjustments' => $calculation->eligible_adjustments,
+        ])->save();
+
+        return $request;
     }
 }

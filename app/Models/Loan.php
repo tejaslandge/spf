@@ -7,6 +7,7 @@ use App\Enums\InterestMethod;
 use App\Enums\LoanFundingStatus;
 use App\Enums\LoanStatus;
 use App\Models\Concerns\Auditable;
+use App\Models\ForeclosureRequest;
 use Database\Factories\LoanFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
@@ -142,6 +143,16 @@ class Loan extends Model
     public function adminAssignments(): HasMany
     {
         return $this->hasMany(LoanAdminAssignment::class);
+    }
+
+    public function foreclosureRequests(): HasMany
+    {
+        return $this->hasMany(ForeclosureRequest::class)->latest('foreclosure_request_date');
+    }
+
+    public function latestForeclosureRequest(): ?ForeclosureRequest
+    {
+        return $this->foreclosureRequests()->first();
     }
 
     public function distributionEntries(): HasMany
