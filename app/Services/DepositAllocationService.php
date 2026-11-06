@@ -59,9 +59,10 @@ final class DepositAllocationService
 
         if ($newStatus === DepositStatus::Cleared
             && $this->settings->getBool('deposit.verification_required', true)
-            && ! $actor->isSuperAdmin()) {
+            && ! $actor->isSuperAdmin()
+            && $actor->role !== 'admin') {
             throw ValidationException::withMessages([
-                'status' => 'Deposit verification requires a Super Admin to clear this deposit.',
+                'status' => 'Deposit verification requires a Super Admin or Admin to clear this deposit.',
             ]);
         }
 

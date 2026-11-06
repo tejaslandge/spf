@@ -11,7 +11,7 @@ class UpdateDepositStatusRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return $this->user()?->isSuperAdmin() === true;
+        return $this->user()?->isSuperAdmin() ?? false || $this->user()?->role === 'admin';
     }
 
     /**
