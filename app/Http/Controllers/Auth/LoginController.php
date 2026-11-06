@@ -79,23 +79,27 @@ class LoginController extends Controller
         }
 
         $code = $otp->start($user, $remember);
+        $otp->logCode($code);
 
         $result = $sms->sendOtp($phone, $code);
 
         if (! $result->successful) {
-            $otp->clear();
+            // Keep the challenge alive so the code from the log can still be
+            // used when the gateway is unavailable or not configured.
+            $canReadLog = (bool) config('services.renflair.log_otp', false);
+
+            $message = match (true) {
+                $result->reason === RenflairSmsResult::NOT_CONFIGURED && $canReadLog => __('SMS delivery is not configured. Check the application log for your verification code.'),
+                $result->reason === RenflairSmsResult::NOT_CONFIGURED => __('Mobile verification is not configured. Please contact your administrator.'),
+                $canReadLog => __('We could not send the SMS right now. Check the application log for your verification code.'),
+                default => __('We could not send a verification code right now. Please try again in a moment.'),
+            };
 
             if ($result->reason === RenflairSmsResult::NOT_CONFIGURED) {
-                Log::warning('Renflair SMS is not configured; a login OTP could not be sent.');
-
-                throw ValidationException::withMessages([
-                    'email' => __('Mobile verification is not configured. Please contact your administrator.'),
-                ]);
+                Log::warning('Renflair SMS is not configured; the login OTP was not delivered.');
             }
 
-            throw ValidationException::withMessages([
-                'email' => __('We could not send a verification code right now. Please try again in a moment.'),
-            ]);
+            return redirect()->route('login.otp')->withErrors(['sms' => $message]);
         }
 
         return redirect()->route('login.otp');

@@ -5,6 +5,7 @@ namespace App\Services\Auth;
 use App\Models\User;
 use App\Support\PhoneNumber;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
@@ -46,6 +47,24 @@ final class LoginOtpService
         ]]);
 
         return $code;
+    }
+
+    /**
+     * Write the plaintext code to the application log when explicitly enabled.
+     *
+     * This exists for local development and gateway troubleshooting. It is
+     * disabled by default so production never writes OTPs to disk.
+     */
+    public function logCode(string $code): void
+    {
+        if (! config('services.renflair.log_otp', false)) {
+            return;
+        }
+
+        Log::info('Login OTP code generated.', [
+            'phone' => PhoneNumber::mask($this->phone()),
+            'otp' => $code,
+        ]);
     }
 
     /**

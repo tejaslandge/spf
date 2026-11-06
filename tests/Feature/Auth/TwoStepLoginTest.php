@@ -2,7 +2,9 @@
 
 use App\Models\User;
 use App\Services\Auth\LoginOtpService;
+use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 beforeEach(function () {
     config([
@@ -47,25 +49,45 @@ test('users without a registered mobile number cannot start otp login', function
     Http::assertNothingSent();
 });
 
-test('login fails safely when the sms gateway is not configured', function () {
-    config(['services.renflair.api_key' => '']);
+test('a missing gateway configuration still shows the otp screen and the logged code works', function () {
+    config([
+        'services.renflair.api_key' => '',
+        'services.renflair.log_otp' => true,
+    ]);
 
     Http::fake();
 
+    $loggedOtp = null;
+
+    Log::listen(function (MessageLogged $event) use (&$loggedOtp) {
+        if (($event->context['otp'] ?? null) !== null) {
+            $loggedOtp = (string) $event->context['otp'];
+        }
+    });
+
     $user = User::factory()->create();
 
-    $response = $this->post(route('login.store'), [
+    $this->post(route('login.store'), [
         'email' => $user->email,
         'password' => 'password',
-    ]);
-
-    $response->assertSessionHasErrors('email');
+    ])->assertRedirect(route('login.otp'));
 
     $this->assertGuest();
 
-    expect(session(LoginOtpService::SESSION_KEY))->toBeNull();
+    expect(session(LoginOtpService::SESSION_KEY))->toBeArray();
+
+    $this->get(route('login.otp'))
+        ->assertOk()
+        ->assertSee('SMS delivery is not configured');
 
     Http::assertNothingSent();
+
+    expect($loggedOtp)->toMatch('/^\d{6}$/');
+
+    $this->post(route('login.otp.verify'), ['code' => $loggedOtp])
+        ->assertRedirect(route('admin.dashboard'));
+
+    $this->assertAuthenticatedAs($user);
 });
 
 test('dashboards are not accessible before otp verification', function () {
@@ -375,42 +397,89 @@ test('otp is required before the otp screen can be shown', function () {
     $this->get(route('login.otp'))->assertRedirect(route('login'));
 });
 
-test('a sms gateway send failure does not create a challenge', function () {
+test('a sms gateway failure still shows the otp screen and the code remains usable', function () {
+    config(['services.renflair.log_otp' => true]);
+
     Http::fake([
         '*sms.renflair.in*' => Http::response(['message' => 'Provider unavailable'], 500),
     ]);
 
     $user = User::factory()->create();
 
-    $response = $this->post(route('login.store'), [
+    $this->post(route('login.store'), [
         'email' => $user->email,
         'password' => 'password',
-    ]);
-
-    $response->assertSessionHasErrors('email');
+    ])->assertRedirect(route('login.otp'));
 
     $this->assertGuest();
 
-    expect(session(LoginOtpService::SESSION_KEY))->toBeNull();
+    expect(session(LoginOtpService::SESSION_KEY))->toBeArray();
+
+    $this->get(route('login.otp'))
+        ->assertOk()
+        ->assertSee('could not send the SMS');
+
+    $this->post(route('login.otp.verify'), ['code' => lastRenflairOtp()])
+        ->assertRedirect(route('admin.dashboard'));
+
+    $this->assertAuthenticatedAs($user);
 });
 
-test('a rejected sms gateway response does not create a challenge', function () {
+test('a rejected sms gateway response still shows the otp screen and the code remains usable', function () {
+    config(['services.renflair.log_otp' => true]);
+
     Http::fake([
         '*sms.renflair.in*' => Http::response(['success' => false, 'error' => 'Invalid API key']),
     ]);
 
     $user = User::factory()->create();
 
-    $response = $this->post(route('login.store'), [
+    $this->post(route('login.store'), [
+        'email' => $user->email,
+        'password' => 'password',
+    ])->assertRedirect(route('login.otp'));
+
+    $this->assertGuest();
+
+    expect(session(LoginOtpService::SESSION_KEY))->toBeArray();
+
+    $this->get(route('login.otp'))
+        ->assertOk()
+        ->assertSee('could not send the SMS');
+
+    $this->post(route('login.otp.verify'), ['code' => lastRenflairOtp()])
+        ->assertRedirect(route('admin.dashboard'));
+
+    $this->assertAuthenticatedAs($user);
+});
+
+test('the otp is written to the application log when logging is enabled', function () {
+    config(['services.renflair.log_otp' => true]);
+
+    Http::fake([
+        '*sms.renflair.in*' => Http::response(['success' => true]),
+    ]);
+
+    $loggedOtp = null;
+    $loggedPhone = null;
+
+    Log::listen(function (MessageLogged $event) use (&$loggedOtp, &$loggedPhone) {
+        if ($event->message === 'Login OTP code generated.') {
+            $loggedOtp = (string) ($event->context['otp'] ?? '');
+            $loggedPhone = (string) ($event->context['phone'] ?? '');
+        }
+    });
+
+    $user = User::factory()->create(['mobile' => '9876543210']);
+
+    $this->post(route('login.store'), [
         'email' => $user->email,
         'password' => 'password',
     ]);
 
-    $response->assertSessionHasErrors('email');
-
-    $this->assertGuest();
-
-    expect(session(LoginOtpService::SESSION_KEY))->toBeNull();
+    expect($loggedOtp)->toMatch('/^\d{6}$/');
+    expect($loggedOtp)->toBe(lastRenflairOtp());
+    expect($loggedPhone)->toBe('+91 XXXXXXX210');
 });
 
 test('a failed resend keeps the previous code valid', function () {

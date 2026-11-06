@@ -39,6 +39,7 @@ return [
         'url' => env('RENFLAIR_SMS_URL', 'https://sms.renflair.in/V1.php'),
         'api_key' => env('RENFLAIR_SMS_API_KEY'),
         'timeout' => (int) env('RENFLAIR_SMS_TIMEOUT', 10),
+        'log_otp' => (bool) env('RENFLAIR_SMS_LOG_OTP', false),
     ],
 
 ];

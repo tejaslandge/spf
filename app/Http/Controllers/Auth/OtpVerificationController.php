@@ -154,6 +154,8 @@ class OtpVerificationController extends Controller
             ]);
         }
 
+        $otp->logCode($code);
+
         return back()->with('status', __('A new verification code has been sent to your registered mobile number.'));
     }
 
