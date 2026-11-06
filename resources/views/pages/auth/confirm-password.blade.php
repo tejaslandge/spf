@@ -100,18 +100,10 @@
 
         {{-- Top bar --}}
         <header class="flex items-center justify-between px-5 py-3 sm:px-8 sm:py-4">
-            <a href="{{ route('home') }}" class="flex items-center gap-3" aria-label="SPF Finance & Capital home">
-                <svg class="size-9 shrink-0" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                    <rect width="44" height="44" rx="13" fill="#0b1b33" />
-                    <rect x="0.75" y="0.75" width="42.5" height="42.5" rx="12.25" stroke="#34d399" stroke-opacity="0.35" stroke-width="1.5" />
-                    <path d="M9.5 22.5 16.5 16l5 3.5L32 9.5" stroke="#fbbf24" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" />
-                    <path d="M26.5 9.5H32V15" stroke="#fbbf24" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" />
-                    <rect x="10" y="25" width="5" height="8.5" rx="1.6" fill="#34d399" fill-opacity="0.55" />
-                    <rect x="17.5" y="20" width="5" height="13.5" rx="1.6" fill="#34d399" fill-opacity="0.8" />
-                    <rect x="25" y="14" width="5" height="19.5" rx="1.6" fill="#a7f3d0" />
-                </svg>
+            <a href="{{ route('home') }}" class="flex items-center gap-3" aria-label="{{ \App\Support\Branding::name() }} home">
+                <x-app-logo-icon class="size-9 shrink-0" />
                 <span class="leading-none">
-                    <span class="block text-lg font-semibold tracking-tight text-navy-900">SPF</span>
+                    <span class="block text-lg font-semibold tracking-tight text-navy-900">{{ \App\Support\Branding::name() }}</span>
                     <span class="mt-1 block text-[8px] font-semibold uppercase tracking-[0.24em] text-slate-500">{{ __('Finance & Capital') }}</span>
                 </span>
             </a>

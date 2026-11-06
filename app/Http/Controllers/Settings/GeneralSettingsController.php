@@ -8,6 +8,7 @@ use App\Http\Requests\Settings\UpdateGeneralSettingsRequest;
 use App\Models\User;
 use App\Services\Settings\SettingsService;
 use App\Support\AuditLogger;
+use App\Support\Branding;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -31,9 +32,7 @@ class GeneralSettingsController extends Controller
 
         return view('pages.settings.general', [
             'company' => $company,
-            'logoUrl' => filled($company['company.logo'] ?? null)
-                ? Storage::disk('public')->url((string) $company['company.logo'])
-                : null,
+            'logoUrl' => Branding::logoUrl(),
         ]);
     }
 
