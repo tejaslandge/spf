@@ -115,5 +115,13 @@ class FortifyServiceProvider extends ServiceProvider
                 ($credentialId ?: $request->session()->getId()).'|'.$request->ip(),
             );
         });
+
+        RateLimiter::for('otp-verify', function (Request $request) {
+            return Limit::perMinute(10)->by('otp-verify|'.$request->session()->getId().'|'.$request->ip());
+        });
+
+        RateLimiter::for('otp-resend', function (Request $request) {
+            return Limit::perMinute(3)->by('otp-resend|'.$request->session()->getId().'|'.$request->ip());
+        });
     }
 }

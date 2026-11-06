@@ -5,6 +5,7 @@ use App\Models\AuditLog;
 use App\Models\Setting;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
 
 function settingsSuperAdmin(): User
@@ -225,6 +226,15 @@ test('weak passwords are rejected', function () {
 });
 
 test('login works with the new password and fails with the old password', function () {
+    config([
+        'services.renflair.url' => 'https://sms.renflair.in/V1.php',
+        'services.renflair.api_key' => 'test-api-key',
+    ]);
+
+    Http::fake([
+        '*sms.renflair.in*' => Http::response(['success' => true]),
+    ]);
+
     $user = User::factory()->create([
         'email' => 'operator@finance.test',
         'password' => Hash::make('Current-Password-123'),
@@ -243,7 +253,13 @@ test('login works with the new password and fails with the old password', functi
     $this->post(route('login.store'), [
         'email' => 'operator@finance.test',
         'password' => 'New-Password-456!',
-    ])->assertRedirect('/dashboard');
+    ])->assertRedirect(route('login.otp'));
+
+    $this->assertGuest();
+
+    $this->post(route('login.otp.verify'), [
+        'code' => lastRenflairOtp(),
+    ])->assertRedirect(route('admin.dashboard'));
 
     $this->assertAuthenticatedAs($user);
 

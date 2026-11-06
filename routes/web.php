@@ -1,11 +1,37 @@
 <?php
 
+use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\Auth\OtpVerificationController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\KycDocumentController;
 use App\Http\Controllers\VerificationController;
 use Illuminate\Support\Facades\Route;
 
 Route::view('/', 'welcome')->name('home');
+
+/*
+|--------------------------------------------------------------------------
+| Two-step authentication
+|--------------------------------------------------------------------------
+|
+| These routes intentionally replace Fortify's password-only login route.
+| Nothing is authenticated until the registered mobile OTP is verified.
+|
+*/
+Route::middleware('guest')->group(function () {
+    Route::get('login', [LoginController::class, 'showLogin'])->name('login');
+    Route::post('login', [LoginController::class, 'login'])->middleware('throttle:login')->name('login.store');
+
+    Route::get('login/otp', [OtpVerificationController::class, 'show'])->name('login.otp');
+    Route::post('login/otp', [OtpVerificationController::class, 'verify'])->middleware('throttle:otp-verify')->name('login.otp.verify');
+    Route::post('login/otp/resend', [OtpVerificationController::class, 'resend'])->middleware('throttle:otp-resend')->name('login.otp.resend');
+    Route::post('login/otp/cancel', [OtpVerificationController::class, 'cancel'])->name('login.otp.cancel');
+
+    // Passkey sign-in would bypass the mandatory mobile OTP step. Passkeys stay
+    // available for step-up confirmation and management once signed in.
+    Route::get('passkeys/login/options', fn () => redirect()->route('login'))->name('passkey.login-options');
+    Route::post('passkeys/login', fn () => redirect()->route('login'))->name('passkey.login');
+});
 
 Route::middleware(['auth'])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');

@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 /*
@@ -47,4 +48,30 @@ expect()->extend('toBeOne', function () {
 function something()
 {
     // ..
+}
+
+/**
+ * Read the OTP from the most recent Renflair SMS request.
+ */
+function lastRenflairOtp(): string
+{
+    $recorded = Http::recorded();
+
+    if ($recorded->isEmpty()) {
+        return '';
+    }
+
+    [$request] = $recorded->last();
+
+    parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+
+    return (string) ($query['OTP'] ?? '');
+}
+
+/**
+ * Return a six-digit code guaranteed to differ from the given one.
+ */
+function otpDifferentFrom(string $otp): string
+{
+    return $otp === '123456' ? '654321' : '123456';
 }
