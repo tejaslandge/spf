@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Models\Loan;
 use App\Policies\LoanDistributionPolicy;
+use App\Services\Security\SessionService;
 use App\Services\Settings\SettingsService;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Events\Login;
@@ -35,6 +36,8 @@ class AppServiceProvider extends ServiceProvider
 
         Event::listen(function (Login $event): void {
             $event->user->forceFill(['last_login_at' => now()])->saveQuietly();
+
+            app(SessionService::class)->enforceSingleSessionPolicy($event->user);
         });
 
         Gate::before(fn ($user) => $user->isSuperAdmin() ? true : null);

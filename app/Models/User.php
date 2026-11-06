@@ -25,7 +25,7 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
  * @property string $name
  * @property string $email
  * @property string|null $mobile
- * @property string $role
+ * @property UserRole $role
  * @property AdminDesignation|null $designation
  * @property array<int, string>|null $permissions
  * @property string|null $avatar_path
@@ -87,7 +87,7 @@ class User extends Authenticatable implements MustVerifyEmail, PasskeyUser
     }
 
     /**
-     * @param  array<int, Permission|string>  $permissions
+     * @param  array<array-key, Permission|string>  $permissions
      */
     public function hasAnyPermission(array $permissions): bool
     {

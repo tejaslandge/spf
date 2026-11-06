@@ -16,8 +16,9 @@ final class SettingsService
     public function get(string $key, mixed $default = null): mixed
     {
         $meta = SettingsRegistry::meta($key);
+        $fallback = $meta['default'] ?? $default;
 
-        return Setting::get($key, $default ?? $meta['default'] ?? null);
+        return Setting::get($key, $fallback);
     }
 
     public function getBool(string $key, bool $default = false): bool
@@ -43,6 +44,7 @@ final class SettingsService
     }
 
     /**
+     * @param  array<array-key, mixed>  $default
      * @return array<string, mixed>
      */
     public function getJson(string $key, array $default = []): array

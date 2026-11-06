@@ -4,6 +4,8 @@ use App\Enums\PaymentMethod;
 use App\Models\EmiPayment;
 use App\Models\Loan;
 use App\Services\EmiCollectionService;
+use App\Services\LoanPenaltyService;
+use App\Services\Settings\UserPreferenceService;
 use App\Support\Money;
 use Flux\Flux;
 use Illuminate\Validation\Rule;
@@ -40,6 +42,8 @@ new #[Title('EMI Collections')] class extends Component
 
     public string $notes = '';
 
+    public string $penalty_amount = '';
+
     public function mount(): void
     {
         $this->payment_date = now()->format('Y-m-d');
@@ -70,7 +74,7 @@ new #[Title('EMI Collections')] class extends Component
             ]))
             ->latest('payment_date')
             ->latest('id')
-            ->paginate(15);
+            ->paginate(UserPreferenceService::rowsPerPageFor(auth()->user(), 15));
     }
 
     /**
@@ -106,7 +110,7 @@ new #[Title('EMI Collections')] class extends Component
 
     public function openModal(): void
     {
-        $this->reset(['loan_id', 'amount', 'reference', 'notes']);
+        $this->reset(['loan_id', 'amount', 'reference', 'notes', 'penalty_amount']);
         $this->payment_date = now()->format('Y-m-d');
         $this->payment_method = 'cash';
         $this->showModal = true;
@@ -118,6 +122,7 @@ new #[Title('EMI Collections')] class extends Component
         $next = $loan?->schedules()->unsettled()->orderBy('installment_no')->first();
 
         $this->amount = $next ? Money::sub($next->total_amount, $next->paid_amount) : '';
+        $this->penalty_amount = $next ? app(LoanPenaltyService::class)->penaltyFor($next) : '';
     }
 
     public function save(): void
@@ -129,12 +134,16 @@ new #[Title('EMI Collections')] class extends Component
             'payment_method' => ['required', Rule::enum(PaymentMethod::class)],
             'reference' => [Rule::requiredIf($this->payment_method !== 'cash'), 'nullable', 'string', 'max:255'],
             'notes' => ['nullable', 'string', 'max:1000'],
+            'penalty_amount' => ['nullable', 'numeric', 'min:0', 'max:10000000'],
         ]);
 
         $loan = Loan::query()->findOrFail($validated['loan_id']);
 
         try {
-            app(EmiCollectionService::class)->collect($loan, $validated, auth()->user());
+            app(EmiCollectionService::class)->collect($loan, [
+                ...$validated,
+                'penalty_amount' => $validated['penalty_amount'] ?: 0,
+            ], auth()->user());
         } catch (\InvalidArgumentException $exception) {
             $this->addError('amount', $exception->getMessage());
 
@@ -232,7 +241,7 @@ new #[Title('EMI Collections')] class extends Component
                     @forelse ($this->payments as $payment)
                         <tr class="transition hover:bg-slate-50/70">
                             <td class="px-5 py-3 font-medium text-slate-800">{{ $payment->receipt_no }}</td>
-                            <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $payment->payment_date->format('d M Y') }}</td>
+                            <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $payment->payment_date->format(\App\Support\Regional::dateFormat()) }}</td>
                             <td class="px-5 py-3">
                                 <a href="{{ route('borrowers.show', $payment->loan->borrower) }}" class="font-medium text-slate-800 hover:text-blue-600">{{ $payment->loan->borrower->full_name }}</a>
                                 <p class="text-[11px] text-slate-400">{{ $payment->loan->borrower->mobile }}</p>
@@ -302,6 +311,14 @@ new #[Title('EMI Collections')] class extends Component
 
                     <flux:input wire:model="amount" :label="__('Amount received (₹)')" type="number" step="0.01" min="1" />
                     @error('amount') <p class="text-xs text-rose-600">{{ $message }}</p> @enderror
+
+                    @if ($penalty_amount !== '' && (float) $penalty_amount > 0)
+                        <div class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                            <flux:input wire:model="penalty_amount" :label="__('Late payment penalty (₹)')" type="number" step="0.01" min="0" />
+                            <p class="mt-1.5 text-[11px] text-amber-800">{{ __('Suggested from the configured penalty rules for the overdue instalment. Adjust or clear it if the penalty is waived.') }}</p>
+                            @error('penalty_amount') <p class="mt-1 text-xs text-rose-600">{{ $message }}</p> @enderror
+                        </div>
+                    @endif
 
                     <div class="grid grid-cols-2 gap-3">
                         <flux:input wire:model="payment_date" :label="__('Payment date')" type="date" required max="{{ now()->format('Y-m-d') }}" />

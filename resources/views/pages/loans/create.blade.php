@@ -4,6 +4,7 @@ use App\Enums\InterestMethod;
 use App\Models\Borrower;
 use App\Services\GuarantorService;
 use App\Services\LoanService;
+use App\Services\Settings\SettingsService;
 use App\Support\Money;
 use Flux\Flux;
 use Illuminate\Http\Request;
@@ -41,12 +42,55 @@ new #[Title('New loan')] class extends Component
 
     public string $notes = '';
 
+    /** @var array<int, int> */
+    public array $tenureOptions = [];
+
     public function mount(Request $request): void
     {
+        $settings = app(SettingsService::class);
+
         $this->borrower_id = (string) ($request->query('borrower') ?? '');
         $this->first_emi_date = now()->addMonthNoOverflow()->format('Y-m-d');
         $this->guarantors = [GuarantorService::blankRow()];
+
+        $this->monthly_interest_rate = $settings->getDecimal('loan.default_monthly_rate', '1.5');
+        $this->interest_method = $settings->get('loan.default_interest_method', 'flat');
+        $this->tenureOptions = array_map('intval', $settings->getJson('loan.tenure_options', [6, 12, 18, 24, 36]));
+
+        if (! in_array((int) $this->tenure_months, $this->tenureOptions, true) && $this->tenureOptions !== []) {
+            $this->tenure_months = (string) $this->tenureOptions[0];
+        }
+
+        $allowed = $settings->getJson('loan.allowed_interest_methods', ['flat', 'reducing']);
+
+        if (! in_array($this->interest_method, $allowed, true)) {
+            $this->interest_method = $allowed[0] ?? 'flat';
+        }
+
+        if (filled($settings->get('loan.default_amount'))) {
+            $this->principal_amount = (string) $settings->get('loan.default_amount');
+        }
+
         $this->syncAnnualFromMonthly();
+    }
+
+    /**
+     * @return array{minAmount: string, maxAmount: string, minRate: string, maxRate: string, minTenure: int, maxTenure: int, methods: array<int, string>}
+     */
+    #[Computed]
+    public function loanLimits(): array
+    {
+        $settings = app(SettingsService::class);
+
+        return [
+            'minAmount' => $settings->getDecimal('loan.min_amount', '1000'),
+            'maxAmount' => $settings->getDecimal('loan.max_amount', '100000000'),
+            'minRate' => $settings->getDecimal('loan.min_monthly_rate', '0'),
+            'maxRate' => $settings->getDecimal('loan.max_monthly_rate', '5'),
+            'minTenure' => $settings->getInt('loan.min_tenure_months', 1),
+            'maxTenure' => $settings->getInt('loan.max_tenure_months', 360),
+            'methods' => $settings->getJson('loan.allowed_interest_methods', ['flat', 'reducing']),
+        ];
     }
 
     public function updatedMonthlyInterestRate(): void
@@ -132,13 +176,15 @@ new #[Title('New loan')] class extends Component
             }
         }
 
+        $limits = $this->loanLimits;
+
         $rules = [
             'borrower_id' => ['required', Rule::exists('borrowers', 'id')->where('status', 'active')],
-            'principal_amount' => ['required', 'numeric', 'min:1000', 'max:100000000'],
-            'monthly_interest_rate' => ['required', 'numeric', 'min:0', 'max:5'],
-            'annual_interest_rate' => ['required', 'numeric', 'min:0', 'max:60'],
-            'interest_method' => ['required', Rule::enum(InterestMethod::class)],
-            'tenure_months' => ['required', 'integer', 'min:1', 'max:360'],
+            'principal_amount' => ['required', 'numeric', 'min:'.$limits['minAmount'], 'max:'.$limits['maxAmount']],
+            'monthly_interest_rate' => ['required', 'numeric', 'min:'.$limits['minRate'], 'max:'.$limits['maxRate']],
+            'annual_interest_rate' => ['required', 'numeric', 'min:0'],
+            'interest_method' => ['required', Rule::in($limits['methods'])],
+            'tenure_months' => ['required', 'integer', 'min:'.$limits['minTenure'], 'max:'.$limits['maxTenure']],
             'first_emi_date' => array_filter([
                 'required',
                 'date',
@@ -211,15 +257,30 @@ new #[Title('New loan')] class extends Component
                         </flux:select>
                     </div>
 
-                    <flux:input wire:model.live.debounce.400ms="principal_amount" :label="__('Principal amount (₹)')" type="number" step="0.01" min="1000" max="100000000" placeholder="100000" required />
-                    <flux:input wire:model.live.debounce.400ms="monthly_interest_rate" :label="__('Monthly interest rate (%)')" type="number" step="0.01" min="0" max="5" placeholder="1" required />
+                    <flux:input wire:model.live.debounce.400ms="principal_amount" :label="__('Principal amount (₹)')" type="number" step="0.01" min="{{ $this->loanLimits['minAmount'] }}" max="{{ $this->loanLimits['maxAmount'] }}" placeholder="100000" required />
+                    <flux:input wire:model.live.debounce.400ms="monthly_interest_rate" :label="__('Monthly interest rate (%)')" type="number" step="0.01" min="{{ $this->loanLimits['minRate'] }}" max="{{ $this->loanLimits['maxRate'] }}" placeholder="1" required />
                     @error('monthly_interest_rate') <p class="-mt-2 text-xs text-rose-600 sm:col-span-2">{{ $message }}</p> @enderror
                     <flux:input wire:model="annual_interest_rate" :label="__('Annual interest rate (%)')" type="number" step="0.01" readonly placeholder="= Monthly × 12" />
                     <p class="-mt-2 text-[11px] text-slate-400 sm:col-span-2">{{ __('Annual rate is auto-calculated as monthly rate × 12.') }}</p>
-                    <flux:input wire:model.live.debounce.400ms="tenure_months" :label="__('Tenure (months)')" type="number" min="1" max="360" required />
+                    <div>
+                        <flux:input wire:model.live.debounce.400ms="tenure_months" :label="__('Tenure (months)')" type="number" min="{{ $this->loanLimits['minTenure'] }}" max="{{ $this->loanLimits['maxTenure'] }}" required />
+                        @if (count($tenureOptions) > 0)
+                            <div class="mt-2 flex flex-wrap gap-1.5">
+                                @foreach ($tenureOptions as $option)
+                                    <button type="button" wire:click="$set('tenure_months', '{{ $option }}')"
+                                            class="rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition {{ (int) $tenure_months === $option ? 'border-navy-900 bg-navy-900 text-white' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300' }}">
+                                        {{ $option }}m
+                                    </button>
+                                @endforeach
+                            </div>
+                        @endif
+                        @error('tenure_months') <p class="mt-1 text-xs text-rose-600">{{ $message }}</p> @enderror
+                    </div>
                     <flux:select wire:model.live="interest_method" :label="__('Interest calculation')" required>
                         @foreach (\App\Enums\InterestMethod::options() as $value => $label)
-                            <option value="{{ $value }}">{{ $label }}</option>
+                            @if (in_array($value, $this->loanLimits['methods'], true))
+                                <option value="{{ $value }}">{{ $label }}</option>
+                            @endif
                         @endforeach
                     </flux:select>
                 </div>
@@ -303,7 +364,7 @@ new #[Title('New loan')] class extends Component
                         <ul class="mt-2 space-y-2">
                             @foreach (array_slice($this->preview->installments, 0, 4) as $installment)
                                 <li class="flex items-center justify-between gap-2 text-xs">
-                                    <span class="text-slate-500">#{{ $installment->installmentNo }} · {{ $installment->dueDate->format('d M Y') }}</span>
+                                    <span class="text-slate-500">#{{ $installment->installmentNo }} · {{ $installment->dueDate->format(\App\Support\Regional::dateFormat()) }}</span>
                                     <span class="font-semibold tabular-nums text-slate-700">{{ \App\Support\Money::format($installment->total) }}</span>
                                 </li>
                             @endforeach

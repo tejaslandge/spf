@@ -63,7 +63,10 @@ new #[Title('Daily Operations')] class extends Component
     public function mount(): void
     {
         if ($this->date === '' || ! $this->isValidDate($this->date)) {
-            $this->date = now()->format('Y-m-d');
+            $filter = (string) app(\App\Services\Settings\UserPreferenceService::class)
+                ->get(auth()->user(), 'date_filter', 'today');
+
+            $this->date = \App\Support\Regional::filterStartDate($filter)->toDateString();
         }
     }
 
@@ -155,7 +158,7 @@ new #[Title('Daily Operations')] class extends Component
             ->orderByRaw("CASE WHEN status = 'pending' THEN 0 WHEN status = 'skipped' THEN 1 ELSE 2 END")
             ->orderByRaw("CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END")
             ->orderBy('id')
-            ->paginate(12);
+            ->paginate(\App\Services\Settings\UserPreferenceService::rowsPerPageFor(auth()->user(), 12));
     }
 
     /**
@@ -329,7 +332,7 @@ new #[Title('Daily Operations')] class extends Component
                     Money::format($related->remainingAmount()),
                     $loan?->loan_code ?? '',
                     $related->installment_no,
-                    $related->due_date->format('d M Y'),
+                    $related->due_date->format(\App\Support\Regional::dateFormat()),
                     config('app.name')
                 ),
             ];
@@ -806,7 +809,7 @@ new #[Title('Daily Operations')] class extends Component
                 <div class="flex items-start justify-between">
                     <div>
                         <h3 class="text-base font-semibold">{{ __('Send all EMI reminders') }}</h3>
-                        <p class="mt-0.5 text-xs text-slate-400">{{ __('One WhatsApp message per pending reminder for :date.', ['date' => now()->parse($this->date)->format('d M Y')]) }}</p>
+                        <p class="mt-0.5 text-xs text-slate-400">{{ __('One WhatsApp message per pending reminder for :date.', ['date' => now()->parse($this->date)->format(\App\Support\Regional::dateFormat())]) }}</p>
                     </div>
                     <button type="button" wire:click="$set('showBulkModal', false)" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"><flux:icon.x-mark class="size-4" /></button>
                 </div>

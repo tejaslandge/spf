@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
 /**
  * A point-in-time snapshot of every application setting.
@@ -13,8 +14,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property int $version
  * @property array<string, mixed> $settings_snapshot
  * @property int|null $created_by
- * @property \Illuminate\Support\Carbon|null $effective_at
- * @property \Illuminate\Support\Carbon|null $created_at
+ * @property Carbon|null $effective_at
+ * @property Carbon|null $created_at
  */
 #[Fillable(['version', 'settings_snapshot', 'created_by', 'effective_at'])]
 class SettingVersion extends Model
@@ -35,13 +36,16 @@ class SettingVersion extends Model
         ];
     }
 
+    /**
+     * @return BelongsTo<User, $this>
+     */
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
     }
 
     /**
-     * @return array<int, string|int|float|bool|null>
+     * @return array<string, array{old: mixed, new: mixed}>
      */
     public function changesAgainst(?SettingVersion $previous): array
     {

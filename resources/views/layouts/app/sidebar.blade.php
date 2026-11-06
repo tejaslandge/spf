@@ -7,11 +7,17 @@
         <flux:sidebar sticky collapsible="mobile" class="fc-sidebar dark border-e border-white/10">
             <flux:sidebar.header class="relative px-1 pb-3">
                 <a href="{{ route(auth()->user()->dashboardRoute()) }}" class="flex min-w-0 items-center gap-3 pe-10 lg:pe-0" wire:navigate>
-                    <span class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-cyber-300 via-cyber-400 to-cyber-500 text-navy-950 shadow-lg shadow-black/40 ring-1 ring-white/25">
-                        <flux:icon.chart-bar class="size-5" />
-                    </span>
+                    @if ($logoUrl = \App\Support\Branding::logoUrl())
+                        <span class="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white/95 shadow-lg shadow-black/40 ring-1 ring-white/25">
+                            <img src="{{ $logoUrl }}" alt="{{ \App\Support\Branding::name() }}" class="size-full object-contain p-1">
+                        </span>
+                    @else
+                        <span class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-cyber-300 via-cyber-400 to-cyber-500 text-navy-950 shadow-lg shadow-black/40 ring-1 ring-white/25">
+                            <flux:icon.chart-bar class="size-5" />
+                        </span>
+                    @endif
                     <span class="min-w-0">
-                        <span class="block truncate text-[13px] font-semibold tracking-tight text-white lg:text-sm">{{ config('app.name', 'Finance & Capital') }}</span>
+                        <span class="block truncate text-[13px] font-semibold tracking-tight text-white lg:text-sm">{{ \App\Support\Branding::name() }}</span>
                         <span class="mt-1 flex items-center gap-1.5 whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.16em] text-white/40 max-lg:hidden">
                             <span class="size-1.5 rounded-full bg-emerald-400 shadow-[0_0_0_3px_rgba(52,211,153,0.15)]"></span>
                             {{ __('Lending operations') }}

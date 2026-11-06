@@ -184,39 +184,55 @@ new #[Title('Investor profile')] class extends Component
     public function openDepositModal(): void
     {
         $this->reset(['deposit_amount', 'deposit_reference', 'deposit_notes']);
-        $this->deposit_status = 'cleared';
+        $this->deposit_status = app(\App\Services\Settings\SettingsService::class)->getBool('deposit.verification_required', true)
+            ? 'pending'
+            : 'cleared';
         $this->deposit_date = now()->format('Y-m-d');
         $this->showDepositModal = true;
     }
 
     public function saveDeposit(): void
     {
+        $settings = app(\App\Services\Settings\SettingsService::class);
+
         $validated = $this->validate([
-            'deposit_amount' => ['required', 'numeric', 'min:1', 'max:100000000'],
+            'deposit_amount' => ['required', 'numeric', 'min:'.$settings->getDecimal('deposit.min_amount', '1'), 'max:'.$settings->getDecimal('deposit.max_amount', '100000000')],
             'deposit_status' => ['required', Rule::enum(\App\Enums\DepositStatus::class)],
             'deposit_date' => ['required', 'date', 'before_or_equal:today'],
             'deposit_reference' => ['nullable', 'string', 'max:120'],
             'deposit_notes' => ['nullable', 'string', 'max:1000'],
         ]);
 
+        $status = $validated['deposit_status'];
+        $verificationRequired = $settings->getBool('deposit.verification_required', true);
+
+        if ($verificationRequired && ! auth()->user()->isSuperAdmin()) {
+            $status = 'pending';
+        }
+
         $this->investor->deposits()->create([
             'amount' => $validated['deposit_amount'],
-            'status' => $validated['deposit_status'],
+            'status' => $status,
             'transaction_reference' => filled($validated['deposit_reference']) ? $validated['deposit_reference'] : null,
             'deposited_at' => $validated['deposit_date'],
-            'cleared_at' => $validated['deposit_status'] === 'cleared' ? now() : null,
-            'cleared_by' => $validated['deposit_status'] === 'cleared' ? auth()->id() : null,
+            'cleared_at' => $status === 'cleared' ? now() : null,
+            'cleared_by' => $status === 'cleared' ? auth()->id() : null,
             'notes' => filled($validated['deposit_notes']) ? $validated['deposit_notes'] : null,
             'created_by' => auth()->id(),
         ]);
 
         $this->showDepositModal = false;
         unset($this->deposits, $this->totals);
-        Flux::toast(variant: 'success', text: __('Deposit recorded.'));
+
+        Flux::toast(variant: 'success', text: $status === 'pending'
+            ? __('Deposit recorded as pending verification.')
+            : __('Deposit recorded.'));
     }
 
     public function openAllocationModal(): void
     {
+        abort_unless(app(\App\Services\Settings\SettingsService::class)->getBool('allocation.allow_manual', true), 403);
+
         $this->reset(['loan_id', 'principal_amount', 'notes']);
         $this->allocation_date = now()->format('Y-m-d');
         $this->showAllocationModal = true;
@@ -224,9 +240,16 @@ new #[Title('Investor profile')] class extends Component
 
     public function allocate(): void
     {
+        $settings = app(\App\Services\Settings\SettingsService::class);
+
+        abort_unless($settings->getBool('allocation.allow_manual', true), 403);
+
+        $minAllocation = $settings->getDecimal('deposit.min_allocation_amount', '0');
+        $minRule = \App\Support\Money::compare($minAllocation, '0') > 0 ? 'min:'.$minAllocation : 'min:1';
+
         $this->validate([
             'loan_id' => ['required', \Illuminate\Validation\Rule::exists('loans', 'id')->where('status', 'active')],
-            'principal_amount' => ['required', 'numeric', 'min:1000', 'max:100000000'],
+            'principal_amount' => ['required', 'numeric', $minRule, 'max:100000000'],
             'allocation_date' => ['required', 'date', 'before_or_equal:today'],
             'notes' => ['nullable', 'string', 'max:1000'],
         ]);
@@ -235,6 +258,20 @@ new #[Title('Investor profile')] class extends Component
 
         if ($loan->status !== \App\Enums\LoanStatus::Active) {
             $this->addError('loan_id', __('Only active loans can receive investor capital.'));
+
+            return;
+        }
+
+        if ($this->investor->allocations()->where('loan_id', $loan->id)->where('status', 'active')->exists()) {
+            $this->addError('loan_id', __('This investor already has an active allocation for this loan.'));
+
+            return;
+        }
+
+        $investorAvailable = app(\App\Services\LoanFundingService::class)->availableCapital($this->investor);
+
+        if (\App\Support\Money::compare($this->principal_amount, $investorAvailable) > 0) {
+            $this->addError('principal_amount', __('This exceeds the cleared capital available for allocation (:amount). Pending deposits are not available.', ['amount' => \App\Support\Money::format($investorAvailable)]));
 
             return;
         }
@@ -265,6 +302,8 @@ new #[Title('Investor profile')] class extends Component
 
     public function releaseAllocation(int $allocationId): void
     {
+        abort_unless(app(\App\Services\Settings\SettingsService::class)->getBool('allocation.allow_reallocation', true), 403);
+
         $allocation = $this->investor->allocations()->findOrFail($allocationId);
 
         $allocation->update(['status' => 'released', 'released_at' => now()]);
@@ -291,7 +330,7 @@ new #[Title('Investor profile')] class extends Component
                         <h2 class="text-xl font-semibold tracking-tight">{{ $investor->name }}</h2>
                         <x-status-badge :status="$investor->status" />
                     </div>
-                    <p class="mt-1 text-xs text-slate-400">{{ $investor->investor_code }} · {{ $investor->pan_number ?: '—' }} · {{ __('Joined :date', ['date' => $investor->created_at->format('d M Y')]) }}</p>
+                    <p class="mt-1 text-xs text-slate-400">{{ $investor->investor_code }} · {{ $investor->pan_number ?: '—' }} · {{ __('Joined :date', ['date' => $investor->created_at->format(\App\Support\Regional::dateFormat())]) }}</p>
                 </div>
             </div>
 
@@ -360,7 +399,7 @@ new #[Title('Investor profile')] class extends Component
                     <p class="mt-1 text-xl font-semibold tabular-nums text-slate-900">{{ $this->activeRate ? rtrim(rtrim((string) $this->activeRate->monthly_rate, '0'), '.') . '%' : __('Global default') }}</p>
                     <p class="mt-1 text-[11px] text-slate-400">
                         @if ($this->activeRate)
-                            {{ __('Effective :date', ['date' => $this->activeRate->effective_from->format('d M Y')]) }}
+                            {{ __('Effective :date', ['date' => $this->activeRate->effective_from->format(\App\Support\Regional::dateFormat())]) }}
                         @else
                             {{ __('No individual override — the global configuration applies.') }}
                         @endif
@@ -372,7 +411,7 @@ new #[Title('Investor profile')] class extends Component
                         <li class="flex items-center justify-between gap-2 rounded-xl border border-slate-100 px-3 py-2">
                             <div class="min-w-0">
                                 <p class="text-xs font-semibold text-slate-800">{{ rtrim(rtrim((string) $rate->monthly_rate, '0'), '.') }}% {{ __('monthly') }}</p>
-                                <p class="text-[11px] text-slate-400">{{ $rate->effective_from->format('d M Y') }} → {{ $rate->effective_to?->format('d M Y') ?? __('open') }}</p>
+                                <p class="text-[11px] text-slate-400">{{ $rate->effective_from->format(\App\Support\Regional::dateFormat()) }} → {{ $rate->effective_to?->format(\App\Support\Regional::dateFormat()) ?? __('open') }}</p>
                             </div>
                             @if (auth()->user()->isSuperAdmin())
                                 <button type="button" wire:click="deleteRate({{ $rate->id }})" wire:confirm="{{ __('Delete this rate? Existing loan snapshots are unaffected.') }}" class="text-[11px] font-semibold text-rose-600 hover:text-rose-700">{{ __('Delete') }}</button>
@@ -422,7 +461,7 @@ new #[Title('Investor profile')] class extends Component
                             </span>
                             <div class="min-w-0 flex-1">
                                 <p class="truncate text-xs font-semibold text-slate-800">
-                                    {{ __('Deposited :date', ['date' => $deposit->deposited_at->format('d M Y')]) }}@if ($deposit->transaction_reference) · {{ $deposit->transaction_reference }}@endif
+                                    {{ __('Deposited :date', ['date' => $deposit->deposited_at->format(\App\Support\Regional::dateFormat())]) }}@if ($deposit->transaction_reference) · {{ $deposit->transaction_reference }}@endif
                                 </p>
                                 <p class="text-[11px] text-slate-400">@if ($deposit->status === \App\Enums\DepositStatus::Cleared){{ __('Cleared — counts as available capital') }}@elseif ($deposit->status === \App\Enums\DepositStatus::Pending){{ __('Awaiting clearance — not counted as available') }}@else{{ $deposit->status->label() }}@endif</p>
                             </div>
@@ -463,7 +502,7 @@ new #[Title('Investor profile')] class extends Component
                                     </td>
                                     <td class="px-5 py-3 text-slate-700">{{ $allocation->loan->borrower->full_name }}</td>
                                     <td class="whitespace-nowrap px-5 py-3 text-end font-semibold tabular-nums text-slate-800">{{ \App\Support\Money::format($allocation->principal_amount) }}</td>
-                                    <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $allocation->allocation_date->format('d M Y') }}</td>
+                                    <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $allocation->allocation_date->format(\App\Support\Regional::dateFormat()) }}</td>
                                     <td class="px-5 py-3">
                                         <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset {{ $allocation->status === \App\Enums\AllocationStatus::Active ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-slate-100 text-slate-600 ring-slate-500/20' }}">
                                             {{ $allocation->status === \App\Enums\AllocationStatus::Active ? __('Active') : __('Released') }}

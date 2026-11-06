@@ -10,6 +10,7 @@ use App\Models\InvestorPayout;
 use App\Models\InvestorPayoutItem;
 use App\Models\JournalEntry;
 use App\Models\User;
+use App\Services\Settings\SettingsService;
 use App\Support\AuditLogger;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
@@ -106,8 +107,13 @@ class InvestorPayoutService
                     ]);
                 }
 
-                $managementFee = Money::round(Money::div(Money::mul($gross, (string) config('finance.investor.management_fee_percent', 10)), '100'));
-                $tds = Money::round(Money::div(Money::mul($gross, (string) config('finance.investor.tds_percent', 10)), '100'));
+                $managementFeePercent = app(SettingsService::class)
+                    ->getDecimal('investor.management_fee_percent', (string) config('finance.investor.management_fee_percent', 10));
+                $tdsPercent = app(SettingsService::class)
+                    ->getDecimal('investor.tds_percent', (string) config('finance.investor.tds_percent', 10));
+
+                $managementFee = Money::round(Money::div(Money::mul($gross, $managementFeePercent), '100'));
+                $tds = Money::round(Money::div(Money::mul($gross, $tdsPercent), '100'));
                 $netAmount = Money::round(Money::sub($gross, $managementFee, $tds));
 
                 $payout->fill([

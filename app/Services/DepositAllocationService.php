@@ -4,10 +4,13 @@ namespace App\Services;
 
 use App\Enums\AllocationStatus;
 use App\Enums\DepositStatus;
+use App\Enums\Permission;
 use App\Models\DepositStatusHistory;
 use App\Models\InvestorAllocation;
 use App\Models\InvestorDeposit;
 use App\Models\User;
+use App\Services\Notifications\StaffNotifier;
+use App\Services\Settings\SettingsService;
 use App\Support\AuditLogger;
 use App\Support\Money;
 use Illuminate\Support\Facades\DB;
@@ -16,6 +19,11 @@ use InvalidArgumentException;
 
 final class DepositAllocationService
 {
+    public function __construct(
+        private readonly SettingsService $settings,
+        private readonly StaffNotifier $notifier,
+    ) {}
+
     /**
      * @return array{deposit_amount: string, allocated_amount: string, available_amount: string}
      */
@@ -49,14 +57,22 @@ final class DepositAllocationService
             ]);
         }
 
+        if ($newStatus === DepositStatus::Cleared
+            && $this->settings->getBool('deposit.verification_required', true)
+            && ! $actor->isSuperAdmin()) {
+            throw ValidationException::withMessages([
+                'status' => 'Deposit verification requires a Super Admin to clear this deposit.',
+            ]);
+        }
+
         return DB::transaction(function () use ($deposit, $newStatus, $reason, $notes, $actor) {
             /** @var InvestorDeposit $locked */
             $locked = InvestorDeposit::query()->with('investor')->lockForUpdate()->findOrFail($deposit->getKey());
 
-            if ($locked->status === DepositStatus::Rejected && $newStatus !== DepositStatus::Rejected) {
-                // Rejected deposits must not become available funds again without an explicit new deposit record.
-                // Allow re-opening only via Super Admin with a note — still log it.
-                // This guard prevents silently allocating rejected funds.
+            if ($locked->status === DepositStatus::Rejected
+                && $newStatus === DepositStatus::Cleared
+                && ! $this->settings->getBool('deposit.allow_reclear_rejected', false)) {
+                throw new InvalidArgumentException('A rejected deposit cannot be cleared again. Record a new deposit instead.');
             }
 
             $old = $locked->status;
@@ -81,6 +97,21 @@ final class DepositAllocationService
                 'status' => $newStatus->value,
                 'rejection_reason' => $newStatus === DepositStatus::Rejected ? trim((string) $reason) : null,
             ]);
+
+            $headline = match ($newStatus) {
+                DepositStatus::Cleared => __('Investor deposit cleared'),
+                DepositStatus::Rejected => __('Investor deposit rejected'),
+                default => __('Investor deposit set to pending'),
+            };
+
+            $this->notifier->notifyPermission(
+                Permission::DepositsVerify,
+                'deposit_updates',
+                $headline,
+                $locked->investor->name.' · '.Money::format((string) $locked->amount),
+                route('super-admin.deposit-allocation.index'),
+                $actor,
+            );
 
             return $locked->refresh();
         });

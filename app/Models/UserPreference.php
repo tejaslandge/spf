@@ -17,6 +17,9 @@ class UserPreference extends Model
 {
     protected $table = 'user_preferences';
 
+    /**
+     * @return BelongsTo<User, $this>
+     */
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);

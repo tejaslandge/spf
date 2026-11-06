@@ -97,7 +97,7 @@ new #[Title('Admin Commissions')] class extends Component
             ->when($this->status !== '', fn ($query) => $query->where('status', $this->status))
             ->latest('period_month')
             ->latest('id')
-            ->paginate(15);
+            ->paginate(\App\Services\Settings\UserPreferenceService::rowsPerPageFor(auth()->user(), 15));
     }
 
     /**
@@ -327,7 +327,7 @@ new #[Title('Admin Commissions')] class extends Component
                         <flux:avatar :name="$profile->user->name" :initials="str($profile->user->name)->substr(0, 2)" size="sm" />
                         <div class="min-w-0 flex-1">
                             <p class="truncate text-xs font-semibold text-slate-800">{{ $profile->user->name }}</p>
-                            <p class="truncate text-[11px] text-slate-400">{{ $profile->designation ?: $profile->user->role->label() }} · {{ __('effective :date', ['date' => $profile->effective_from->format('d M Y')]) }}</p>
+                            <p class="truncate text-[11px] text-slate-400">{{ $profile->designation ?: $profile->user->role->label() }} · {{ __('effective :date', ['date' => $profile->effective_from->format(\App\Support\Regional::dateFormat())]) }}</p>
                         </div>
                         <div class="text-end">
                             <p class="text-xs font-semibold tabular-nums text-slate-800">{{ rtrim(rtrim((string) $profile->commission_rate, '0'), '.') }}%</p>
@@ -393,7 +393,7 @@ new #[Title('Admin Commissions')] class extends Component
                                                 <button type="button" wire:click="openProcessModal({{ $payout->id }})" class="text-[11px] font-semibold text-emerald-600 hover:text-emerald-700">{{ __('Process') }}</button>
                                                 <button type="button" wire:click="openRejectModal({{ $payout->id }})" class="text-[11px] font-semibold text-rose-600 hover:text-rose-700">{{ __('Reject') }}</button>
                                             @elseif ($payout->status === PayoutStatus::Paid)
-                                                <span class="text-[11px] text-slate-400">{{ $payout->paid_at?->format('d M Y') }}</span>
+                                                <span class="text-[11px] text-slate-400">{{ $payout->paid_at?->format(\App\Support\Regional::dateFormat()) }}</span>
                                             @endif
                                         </div>
                                     @else

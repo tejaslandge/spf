@@ -20,8 +20,20 @@ new #[Title('Reports')] class extends Component
 
     public function mount(): void
     {
-        $this->from = CarbonImmutable::today()->startOfMonth()->subMonths(5)->toDateString();
-        $this->to = CarbonImmutable::today()->toDateString();
+        $today = CarbonImmutable::today();
+
+        $period = (string) app(\App\Services\Settings\UserPreferenceService::class)
+            ->get(auth()->user(), 'reporting_period', 'current_month');
+
+        [$from, $to] = match ($period) {
+            'last_month' => [$today->subMonthNoOverflow()->startOfMonth(), $today->subMonthNoOverflow()->endOfMonth()],
+            'current_quarter' => [$today->startOfQuarter(), $today],
+            'current_financial_year' => [\App\Support\Regional::financialYearStart($today), $today],
+            default => [$today->startOfMonth(), $today],
+        };
+
+        $this->from = $from->toDateString();
+        $this->to = $to->toDateString();
     }
 
     public function updatedFrom(): void
@@ -305,7 +317,7 @@ new #[Title('Reports')] class extends Component
 
             <div class="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
                 <p class="text-xs text-slate-400">
-                    {{ __('Showing :from to :to', ['from' => $this->period[0]->format('d M Y'), 'to' => $this->period[1]->format('d M Y')]) }}
+                    {{ __('Showing :from to :to', ['from' => $this->period[0]->format(\App\Support\Regional::dateFormat()), 'to' => $this->period[1]->format(\App\Support\Regional::dateFormat())]) }}
                 </p>
             </div>
         </div>
@@ -477,7 +489,7 @@ new #[Title('Reports')] class extends Component
                                     <a href="{{ route('loans.show', $schedule->loan) }}" class="font-medium text-slate-800 hover:text-blue-600">{{ $schedule->loan->borrower->full_name }}</a>
                                     <p class="text-[11px] text-slate-400">{{ $schedule->loan->loan_code }} · #{{ $schedule->installment_no }}</p>
                                 </td>
-                                <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $schedule->due_date->format('d M Y') }}</td>
+                                <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $schedule->due_date->format(\App\Support\Regional::dateFormat()) }}</td>
                                 <td class="whitespace-nowrap px-5 py-3 text-end font-semibold tabular-nums text-slate-800">{{ \App\Support\Money::format($schedule->total_amount) }}</td>
                                 <td class="whitespace-nowrap px-5 py-3 text-end tabular-nums text-rose-600">{{ (int) $schedule->due_date->diffInDays(today()) }}</td>
                             </tr>
@@ -517,7 +529,7 @@ new #[Title('Reports')] class extends Component
                                     <a href="{{ route('loans.show', $payment->loan) }}" class="font-medium text-slate-800 hover:text-blue-600">{{ $payment->loan->borrower->full_name }}</a>
                                     <p class="text-[11px] text-slate-400">{{ $payment->loan->loan_code }}</p>
                                 </td>
-                                <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $payment->payment_date->format('d M Y') }}</td>
+                                <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $payment->payment_date->format(\App\Support\Regional::dateFormat()) }}</td>
                                 <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $payment->payment_method->label() }}</td>
                                 <td class="whitespace-nowrap px-5 py-3 text-end font-semibold tabular-nums text-slate-800">{{ \App\Support\Money::format($payment->amount) }}</td>
                             </tr>

@@ -3,9 +3,12 @@
 use App\Enums\BorrowerStatus;
 use App\Enums\KycDocumentType;
 use App\Models\Borrower;
+use App\Services\Settings\KycSettings;
 use Flux\Flux;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
+use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 use Livewire\WithFileUploads;
@@ -44,6 +47,12 @@ new #[Title('Borrower')] class extends Component
 
     public $electricity_bill = null;
 
+    public $income_proof = null;
+
+    public $bank_statement = null;
+
+    public $employment_proof = null;
+
     public function mount(?Borrower $borrower = null): void
     {
         $this->borrower = $borrower;
@@ -66,11 +75,39 @@ new #[Title('Borrower')] class extends Component
     }
 
     /**
+     * Enabled KYC document slots, driven by the KYC settings screen.
+     *
+     * @return array<int, array{type: string, property: string, label: string, mandatory: bool}>
+     */
+    #[Computed]
+    public function documentSlots(): array
+    {
+        $documents = app(KycSettings::class)->documentsFor(Borrower::class);
+
+        $slots = [];
+
+        foreach ($documents as $type => $config) {
+            if (! ($config['enabled'] ?? false)) {
+                continue;
+            }
+
+            $slots[] = [
+                'type' => $type,
+                'property' => $type,
+                'label' => KycDocumentType::tryFrom($type)?->label() ?? $type,
+                'mandatory' => (bool) ($config['mandatory'] ?? false),
+            ];
+        }
+
+        return $slots;
+    }
+
+    /**
      * @return array<string, mixed>
      */
     protected function rules(): array
     {
-        return [
+        $rules = [
             'full_name' => ['required', 'string', 'min:2', 'max:255'],
             'address' => ['required', 'string', 'min:5', 'max:1000'],
             'mobile' => ['required', 'digits:10', Rule::unique('borrowers', 'mobile')->ignore($this->borrower?->id)],
@@ -82,10 +119,15 @@ new #[Title('Borrower')] class extends Component
             'bank_ifsc' => ['nullable', 'string', 'max:20'],
             'status' => ['required', Rule::enum(BorrowerStatus::class)],
             'notes' => ['nullable', 'string', 'max:2000'],
-            'aadhaar' => ['nullable', 'file', 'mimes:jpg,jpeg,png,pdf', 'max:5120'],
-            'pan' => ['nullable', 'file', 'mimes:jpg,jpeg,png,pdf', 'max:5120'],
-            'electricity_bill' => ['nullable', 'file', 'mimes:jpg,jpeg,png,pdf', 'max:5120'],
         ];
+
+        $fileRules = app(KycSettings::class)->fileValidationRules();
+
+        foreach ($this->documentSlots as $slot) {
+            $rules[$slot['property']] = ['nullable', ...$fileRules];
+        }
+
+        return $rules;
     }
 
     public function save(): void
@@ -105,9 +147,15 @@ new #[Title('Borrower')] class extends Component
             $borrower->created_by ??= auth()->id();
             $borrower->save();
 
-            $this->storeDocument($borrower, $this->aadhaar, KycDocumentType::Aadhaar);
-            $this->storeDocument($borrower, $this->pan, KycDocumentType::Pan);
-            $this->storeDocument($borrower, $this->electricity_bill, KycDocumentType::ElectricityBill);
+            foreach ($this->documentSlots as $slot) {
+                $type = KycDocumentType::tryFrom($slot['type']);
+
+                if ($type === null) {
+                    continue;
+                }
+
+                $this->storeDocument($borrower, $this->{$slot['property']}, $type, $slot['property']);
+            }
 
             return $borrower;
         });
@@ -117,10 +165,36 @@ new #[Title('Borrower')] class extends Component
         $this->redirectRoute('borrowers.show', $borrower, navigate: true);
     }
 
-    private function storeDocument(Borrower $borrower, mixed $file, KycDocumentType $type): void
+    private function storeDocument(Borrower $borrower, mixed $file, KycDocumentType $type, string $property): void
     {
         if (! $file) {
             return;
+        }
+
+        $settings = app(KycSettings::class);
+
+        $existing = $borrower->kycDocuments()
+            ->where('type', $type->value)
+            ->orderByDesc('id')
+            ->get();
+
+        if (! $settings->reuploadAllowed() && $existing->isNotEmpty()) {
+            throw ValidationException::withMessages([
+                $property => __('Re-uploading this document is currently disabled. Contact a Super Admin.'),
+            ]);
+        }
+
+        if ($existing->count() >= $settings->maxUploadCount()) {
+            throw ValidationException::withMessages([
+                $property => __('The maximum of :count uploads for this document type has been reached.', ['count' => $settings->maxUploadCount()]),
+            ]);
+        }
+
+        $status = $settings->manualVerification() ? 'pending' : 'verified';
+
+        if (! $settings->reverificationRequired() && $existing->firstWhere('status', 'verified') !== null) {
+            // A previously verified document keeps its verified state on replacement.
+            $status = 'verified';
         }
 
         $path = $file->store('kyc/borrowers/'.$borrower->id, 'local');
@@ -131,7 +205,9 @@ new #[Title('Borrower')] class extends Component
             'original_name' => $file->getClientOriginalName(),
             'mime_type' => $file->getMimeType(),
             'size' => $file->getSize(),
-            'status' => 'pending',
+            'status' => $status,
+            'verified_at' => $status === 'verified' ? now() : null,
+            'notes' => $status === 'verified' && ! $settings->manualVerification() ? 'Auto-verified (manual verification disabled)' : null,
         ]);
     }
 };
@@ -186,15 +262,25 @@ new #[Title('Borrower')] class extends Component
 
         <div class="fc-card p-5 sm:p-6">
             <h3 class="text-sm font-semibold text-slate-900">{{ __('KYC documents') }}</h3>
-            <p class="mt-1 text-xs text-slate-400">{{ __('JPG, PNG or PDF up to 5 MB. Documents are stored privately.') }}</p>
+            <p class="mt-1 text-xs text-slate-400">
+                {{ __('Allowed formats: :formats up to :size MB. Documents are stored privately and verified before KYC approval.', [
+                    'formats' => strtoupper(implode(', ', app(\App\Services\Settings\KycSettings::class)->allowedFormats())),
+                    'size' => number_format(app(\App\Services\Settings\KycSettings::class)->maxFileSizeKb() / 1024, 1),
+                ]) }}
+            </p>
 
             <div class="mt-4 grid gap-4 sm:grid-cols-3">
-                <flux:input wire:model="aadhaar" type="file" :label="__('Aadhaar card')" accept=".jpg,.jpeg,.png,.pdf" />
-                <flux:input wire:model="pan" type="file" :label="__('PAN card')" accept=".jpg,.jpeg,.png,.pdf" />
-                <flux:input wire:model="electricity_bill" type="file" :label="__('Electricity bill')" accept=".jpg,.jpeg,.png,.pdf" />
+                @foreach ($this->documentSlots as $slot)
+                    <div wire:key="kyc-{{ $slot['property'] }}">
+                        <flux:input wire:model="{{ $slot['property'] }}" type="file"
+                            :label="$slot['label'].($slot['mandatory'] ? ' *' : '')"
+                            accept="{{ collect(app(\App\Services\Settings\KycSettings::class)->allowedFormats())->map(fn ($f) => '.'.$f)->implode(',') }}" />
+                        @error($slot['property']) <p class="mt-1 text-xs font-medium text-red-600">{{ $message }}</p> @enderror
+                    </div>
+                @endforeach
             </div>
 
-            <div wire:loading wire:target="aadhaar,pan,electricity_bill" class="mt-3 text-xs text-blue-600">
+            <div wire:loading wire:target="{{ collect($this->documentSlots)->pluck('property')->implode(',') }}" class="mt-3 text-xs text-blue-600">
                 {{ __('Uploading…') }}
             </div>
         </div>

@@ -6,13 +6,16 @@ use App\Enums\AllocationStatus;
 use App\Enums\CommitmentStatus;
 use App\Enums\DepositStatus;
 use App\Enums\InvestorStatus;
+use App\Enums\KycStatus;
 use App\Enums\LoanFundingStatus;
 use App\Enums\LoanStatus;
 use App\Models\Investor;
 use App\Models\InvestorAllocation;
+use App\Models\KycDocument;
 use App\Models\Loan;
 use App\Models\LoanFundingCommitment;
 use App\Models\User;
+use App\Services\Settings\SettingsService;
 use App\Support\AuditLogger;
 use App\Support\Money;
 use Illuminate\Support\Facades\DB;
@@ -69,6 +72,8 @@ class LoanFundingService
             if ($investor->status !== InvestorStatus::Active) {
                 throw new InvalidArgumentException('Only active investors can commit capital.');
             }
+
+            $this->assertInvestorEligible($investor);
 
             $amount = Money::round($amount);
 
@@ -168,6 +173,35 @@ class LoanFundingService
             ->sum('principal_amount');
 
         return Money::round(Money::sub($deposited, $allocated));
+    }
+
+    /**
+     * Enforce the configured investor eligibility rules before capital is
+     * committed or allocated.
+     */
+    private function assertInvestorEligible(Investor $investor): void
+    {
+        $settings = app(SettingsService::class);
+
+        if ($settings->getBool('investor.require_kyc_verified', false)
+            && KycDocument::overallStatusFor(Investor::class, $investor->getKey()) !== KycStatus::Verified) {
+            throw new InvalidArgumentException('A verified KYC record is required before '.$investor->name.' can fund loans.');
+        }
+
+        $cleared = (string) $investor->deposits()
+            ->where('status', DepositStatus::Cleared->value)
+            ->sum('amount');
+
+        $minimum = $settings->getDecimal('investor.min_investment', '0');
+        $maximum = $settings->get('investor.max_investment');
+
+        if (Money::compare($minimum, '0') > 0 && Money::compare($cleared, $minimum) < 0) {
+            throw new InvalidArgumentException('A minimum cleared investment of '.Money::format($minimum).' is required before funding loans.');
+        }
+
+        if ($maximum !== null && $maximum !== '' && Money::compare($cleared, (string) $maximum) > 0) {
+            throw new InvalidArgumentException('Cleared investment exceeds the maximum investment amount of '.Money::format((string) $maximum).'.');
+        }
     }
 
     /**
@@ -272,7 +306,13 @@ class LoanFundingService
             throw new InvalidArgumentException('Enter at least one investor contribution.');
         }
 
-        DB::transaction(function () use ($loan, $lines, $actor): void {
+        $settings = app(SettingsService::class);
+
+        if (! $settings->getBool('allocation.allow_partial', true) && count($lines) > 1) {
+            throw new InvalidArgumentException('Partial allocation is disabled. A single investor must fund the full approved amount.');
+        }
+
+        DB::transaction(function () use ($loan, $lines, $actor, $settings): void {
             /** @var Loan $locked */
             $locked = Loan::query()->lockForUpdate()->findOrFail($loan->getKey());
 
@@ -302,6 +342,16 @@ class LoanFundingService
 
                 if (! $investor || $investor->status !== InvestorStatus::Active) {
                     throw new InvalidArgumentException('Every allocation must reference an active investor.');
+                }
+
+                $this->assertInvestorEligible($investor);
+
+                $minAllocation = $settings->getDecimal('deposit.min_allocation_amount', '0');
+
+                if (Money::compare($minAllocation, '0') > 0 && Money::compare($line['amount'], $minAllocation) < 0) {
+                    throw new InvalidArgumentException(
+                        $investor->name.' allocation must be at least '.Money::format($minAllocation).'.'
+                    );
                 }
 
                 $available = $this->availableCapital($investor);

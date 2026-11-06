@@ -108,7 +108,7 @@ new #[Title('Borrower profile')] class extends Component
                         <h2 class="text-xl font-semibold tracking-tight">{{ $borrower->full_name }}</h2>
                         <x-status-badge :status="$borrower->status" />
                     </div>
-                    <p class="mt-1 text-xs text-slate-400">{{ $borrower->borrower_code }} · {{ __('Joined :date', ['date' => $borrower->created_at->format('d M Y')]) }}</p>
+                    <p class="mt-1 text-xs text-slate-400">{{ $borrower->borrower_code }} · {{ __('Joined :date', ['date' => $borrower->created_at->format(\App\Support\Regional::dateFormat())]) }}</p>
                 </div>
             </div>
 
@@ -128,7 +128,7 @@ new #[Title('Borrower profile')] class extends Component
     <div class="grid gap-4 sm:grid-cols-3">
         <x-stat-card :label="__('Total sanctioned')" :value="\App\Support\Money::format($this->totals['sanctioned'])" :hint="__(':count loans', ['count' => $this->loans->count()])" icon="banknotes" tone="navy" />
         <x-stat-card :label="__('Outstanding principal')" :value="\App\Support\Money::format($this->totals['outstanding'])" :hint="__('Across all loans')" icon="scale" tone="blue" />
-        <x-stat-card :label="__('Next EMI')" :value="$this->totals['next_due'] ? \Illuminate\Support\Carbon::parse($this->totals['next_due'])->format('d M Y') : '—'" :hint="__('Earliest active loan')" icon="calendar-days" tone="amber" />
+        <x-stat-card :label="__('Next EMI')" :value="$this->totals['next_due'] ? \Illuminate\Support\Carbon::parse($this->totals['next_due'])->format(\App\Support\Regional::dateFormat()) : '—'" :hint="__('Earliest active loan')" icon="calendar-days" tone="amber" />
     </div>
 
     <div class="grid gap-4 xl:grid-cols-3">
@@ -161,7 +161,7 @@ new #[Title('Borrower profile')] class extends Component
                             <div class="flex items-start justify-between gap-2">
                                 <div class="min-w-0">
                                     <p class="truncate text-xs font-semibold text-slate-800">{{ $document->type->label() }}</p>
-                                    <p class="mt-0.5 text-[11px] text-slate-400">{{ $document->created_at->format('d M Y') }} · {{ $document->original_name }}</p>
+                                    <p class="mt-0.5 text-[11px] text-slate-400">{{ $document->created_at->format(\App\Support\Regional::dateFormat()) }} · {{ $document->original_name }}</p>
                                 </div>
                                 <x-status-badge :status="$document->status" />
                             </div>
@@ -231,7 +231,7 @@ new #[Title('Borrower profile')] class extends Component
                             </span>
                             <div class="min-w-0 flex-1">
                                 <p class="truncate text-xs font-semibold text-slate-800">{{ $payment->receipt_no }} · {{ $payment->loan->loan_code }}</p>
-                                <p class="text-[11px] text-slate-400">{{ $payment->payment_date->format('d M Y') }} · {{ $payment->payment_method->label() }}</p>
+                                <p class="text-[11px] text-slate-400">{{ $payment->payment_date->format(\App\Support\Regional::dateFormat()) }} · {{ $payment->payment_method->label() }}</p>
                             </div>
                             <span class="text-xs font-semibold tabular-nums text-emerald-600">+{{ \App\Support\Money::format($payment->amount) }}</span>
                         </li>

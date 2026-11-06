@@ -66,7 +66,7 @@ new #[Title('Investor Payout Dashboard')] class extends Component
             })
             ->latest('period_month')
             ->latest('id')
-            ->paginate(15);
+            ->paginate(\App\Services\Settings\UserPreferenceService::rowsPerPageFor(auth()->user(), 15));
     }
 
     /**
@@ -308,7 +308,7 @@ new #[Title('Investor Payout Dashboard')] class extends Component
                                             <button type="button" wire:click="openProcessModal({{ $payout->id }})" class="text-[11px] font-semibold text-emerald-600 hover:text-emerald-700">{{ __('Process') }}</button>
                                             <button type="button" wire:click="openRejectModal({{ $payout->id }})" class="text-[11px] font-semibold text-rose-600 hover:text-rose-700">{{ __('Reject') }}</button>
                                         @elseif ($payout->status === \App\Enums\PayoutStatus::Paid)
-                                            <span class="text-[11px] text-slate-400">{{ $payout->paid_at?->format('d M Y') }}</span>
+                                            <span class="text-[11px] text-slate-400">{{ $payout->paid_at?->format(\App\Support\Regional::dateFormat()) }}</span>
                                         @endif
                                     </div>
                                 @else

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\Money;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -77,5 +78,42 @@ class InterestConfiguration extends Model
             (string) $this->company_allocation_percent,
             4,
         );
+    }
+
+    /**
+     * Effective rate distribution for this configuration.
+     *
+     * Configurations saved from the Interest Distribution settings screen
+     * carry explicit monthly rates. Legacy configurations store the admin
+     * commission as a split weight instead of a rate; when the stored rates
+     * exceed the borrower rate, the effective rates are derived from the
+     * collected-interest splits so the displayed distribution matches the
+     * amount investors actually receive.
+     *
+     * @return array{borrower: string, investor: string, admin: string, company: string}
+     */
+    public function rateBreakdown(): array
+    {
+        $borrower = (string) $this->borrower_monthly_rate;
+        $investor = (string) $this->default_investor_monthly_rate;
+        $admin = (string) ($this->default_admin_commission_rate ?? '0');
+
+        if (Money::compare($borrower, '0') > 0 && Money::compare(Money::add($investor, $admin), $borrower) > 0) {
+            $investor = Money::div(Money::mul($borrower, (string) $this->investor_allocation_percent), '100');
+            $admin = Money::div(Money::mul($borrower, (string) $this->admin_allocation_percent), '100');
+        }
+
+        $company = Money::sub($borrower, $investor, $admin);
+
+        if (Money::compare($company, '0', 6) < 0) {
+            $company = '0';
+        }
+
+        return [
+            'borrower' => $borrower,
+            'investor' => $investor,
+            'admin' => $admin,
+            'company' => $company,
+        ];
     }
 }

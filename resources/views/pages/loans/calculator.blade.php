@@ -192,7 +192,7 @@ new #[Title('Loan calculator')] class extends Component
         <div class="grid gap-4 xl:grid-cols-3">
             <div class="fc-card p-5 sm:p-6 xl:col-span-1">
                 <h3 class="text-sm font-semibold">{{ __('Offer terms') }}</h3>
-                <p class="mt-0.5 text-[11px] text-slate-400">{{ __('First EMI date · :date', ['date' => $loan->first_emi_date->format('d M Y')]) }}</p>
+                <p class="mt-0.5 text-[11px] text-slate-400">{{ __('First EMI date · :date', ['date' => $loan->first_emi_date->format(\App\Support\Regional::dateFormat())]) }}</p>
 
                 @if ($loan->status === \App\Enums\LoanStatus::Pending && ! in_array($loan->application_status, [\App\Enums\ApplicationStatus::Accepted, \App\Enums\ApplicationStatus::Rejected, \App\Enums\ApplicationStatus::Cancelled], true))
                     <form wire:submit="generateOffer" class="mt-4 space-y-3">
@@ -294,7 +294,7 @@ new #[Title('Loan calculator')] class extends Component
                                                     'emi' => Money::format($offer->emi_amount),
                                                     'interest' => Money::format($offer->total_interest),
                                                     'total' => Money::format($offer->total_repayment),
-                                                    'date' => $offer->offered_at->format('d M Y, H:i'),
+                                                    'date' => $offer->offered_at->format(\App\Support\Regional::dateFormat().', '.\App\Support\Regional::timeFormat()),
                                                 ]) }}
                                             </p>
                                             <p class="mt-0.5 text-[11px] text-slate-400">

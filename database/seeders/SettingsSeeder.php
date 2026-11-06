@@ -3,27 +3,30 @@
 namespace Database\Seeders;
 
 use App\Models\Setting;
+use App\Services\Settings\SettingsRegistry;
 use Illuminate\Database\Seeder;
 
 class SettingsSeeder extends Seeder
 {
     public function run(): void
     {
-        $settings = [
-            ['key' => 'company.name', 'value' => 'Finance & Capital', 'group' => 'company'],
-            ['key' => 'company.address', 'value' => 'Mumbai, Maharashtra, India', 'group' => 'company'],
-            ['key' => 'company.phone', 'value' => '+91 90000 00000', 'group' => 'company'],
-            ['key' => 'loan.default_interest_rate', 'value' => '12', 'type' => 'string', 'group' => 'loan'],
-            ['key' => 'loan.foreclosure_fee_type', 'value' => 'none', 'group' => 'loan'],
-            ['key' => 'loan.foreclosure_fee_value', 'value' => '0', 'group' => 'loan'],
-            ['key' => 'investor.management_fee_percent', 'value' => '10', 'group' => 'investor'],
-            ['key' => 'investor.tds_percent', 'value' => '10', 'group' => 'investor'],
-            ['key' => 'notifications.whatsapp_enabled', 'value' => '0', 'type' => 'boolean', 'group' => 'notifications'],
-            ['key' => 'notifications.sms_enabled', 'value' => '0', 'type' => 'boolean', 'group' => 'notifications'],
-        ];
+        // Seed every scalar default that has not been customised yet. Existing
+        // values are never overwritten and structured values keep flowing from
+        // the registry defaults until a Super Admin saves them.
+        foreach (SettingsRegistry::keys() as $key => $meta) {
+            $default = $meta['default'];
 
-        foreach ($settings as $setting) {
-            Setting::query()->updateOrCreate(['key' => $setting['key']], $setting);
+            if ($default === null || is_array($default)) {
+                continue;
+            }
+
+            Setting::query()->firstOrCreate(['key' => $key], [
+                'value' => is_bool($default) ? ($default ? '1' : '0') : (string) $default,
+                'type' => $meta['type'],
+                'group' => $meta['group'],
+                'description' => $meta['label'],
+                'is_sensitive' => $meta['sensitive'] ?? false,
+            ]);
         }
     }
 }

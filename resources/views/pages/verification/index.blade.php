@@ -75,7 +75,7 @@ new #[Title('Verification')] class extends Component
             $query->whereDate('created_at', $this->date);
         }
 
-        $rows = $query->latest()->paginate(12);
+        $rows = $query->latest()->paginate(\App\Services\Settings\UserPreferenceService::rowsPerPageFor(auth()->user(), 12));
 
         $mode = $this->mode;
         $status = $this->status;
@@ -233,7 +233,7 @@ new #[Title('Verification')] class extends Component
                             <td class="px-5 py-3 text-slate-600">{{ $mode === 'investor' ? ($row->email ?: '—') : '—' }}</td>
                             <td class="px-5 py-3 text-slate-600">{{ $row->kyc_documents_count }}</td>
                             <td class="px-5 py-3"><x-status-badge :status="$row->verification_status" /></td>
-                            <td class="whitespace-nowrap px-5 py-3 text-xs text-slate-500">{{ $row->created_at?->format('d M Y') ?? '—' }}</td>
+                            <td class="whitespace-nowrap px-5 py-3 text-xs text-slate-500">{{ $row->created_at?->format(\App\Support\Regional::dateFormat()) ?? '—' }}</td>
                             <td class="px-5 py-3 text-end">
                                 <a href="{{ route('super-admin.verification.show', ['type' => $mode, 'subject' => $row->id]) }}" class="inline-flex items-center gap-1 rounded-lg bg-navy-900 px-3 py-2 text-[11px] font-semibold text-white hover:bg-navy-800">{{ __('View Details') }}</a>
                             </td>

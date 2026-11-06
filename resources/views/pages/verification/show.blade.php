@@ -230,7 +230,7 @@ new #[Title('Verification detail')] class extends Component
                         <x-status-badge :status="$this->subjectModel->verification_status" />
                         <span class="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-inset ring-slate-500/20">{{ $type === 'investor' ? __('Investor') : __('Borrower') }}</span>
                     </div>
-                    <p class="mt-1 text-xs text-slate-400">{{ $type === 'investor' ? $this->subjectModel->investor_code : $this->subjectModel->borrower_code }} · {{ __('Registered :date', ['date' => $this->subjectModel->created_at->format('d M Y')]) }}</p>
+                    <p class="mt-1 text-xs text-slate-400">{{ $type === 'investor' ? $this->subjectModel->investor_code : $this->subjectModel->borrower_code }} · {{ __('Registered :date', ['date' => $this->subjectModel->created_at->format(\App\Support\Regional::dateFormat())]) }}</p>
                 </div>
             </div>
             <div class="flex flex-wrap items-center gap-2">
@@ -254,7 +254,7 @@ new #[Title('Verification detail')] class extends Component
                     <div><dt class="text-xs text-slate-400">{{ __('Email') }}</dt><dd class="font-medium text-slate-800">{{ $type === 'investor' ? ($this->subjectModel->email ?: '—') : '—' }}</dd></div>
                     <div><dt class="text-xs text-slate-400">{{ __('Date of Birth') }}</dt><dd class="font-medium text-slate-800">—</dd></div>
                     <div><dt class="text-xs text-slate-400">{{ __('User Type') }}</dt><dd class="font-medium text-slate-800">{{ $type === 'investor' ? __('Investor') : __('Borrower') }}</dd></div>
-                    <div><dt class="text-xs text-slate-400">{{ __('Registration Date') }}</dt><dd class="font-medium text-slate-800">{{ $this->subjectModel->created_at->format('d M Y') }}</dd></div>
+                    <div><dt class="text-xs text-slate-400">{{ __('Registration Date') }}</dt><dd class="font-medium text-slate-800">{{ $this->subjectModel->created_at->format(\App\Support\Regional::dateFormat()) }}</dd></div>
                     <div class="sm:col-span-2"><dt class="text-xs text-slate-400">{{ __('Address') }}</dt><dd class="font-medium leading-relaxed text-slate-800">{{ $this->subjectModel->address }}</dd></div>
                     <div><dt class="text-xs text-slate-400">{{ __('Current Verification Status') }}</dt><dd class="font-medium text-slate-800"><x-status-badge :status="$this->subjectModel->verification_status" /></dd></div>
                 </dl>
@@ -271,7 +271,7 @@ new #[Title('Verification detail')] class extends Component
                             <div class="flex items-start justify-between gap-2">
                                 <div class="min-w-0">
                                     <p class="truncate text-xs font-semibold text-slate-800">{{ $document->type->label() }}</p>
-                                    <p class="mt-0.5 text-[11px] text-slate-400">{{ $document->created_at->format('d M Y') }} · {{ $document->original_name }}</p>
+                                    <p class="mt-0.5 text-[11px] text-slate-400">{{ $document->created_at->format(\App\Support\Regional::dateFormat()) }} · {{ $document->original_name }}</p>
                                 </div>
                                 <x-status-badge :status="$document->status" />
                             </div>
@@ -309,7 +309,7 @@ new #[Title('Verification detail')] class extends Component
                     @forelse ($this->history as $h)
                         <li class="rounded-lg border border-slate-100 px-3 py-2 text-xs">
                             <span class="font-semibold text-slate-700">{{ $h->action }}</span>
-                            <span class="text-slate-400">· {{ $h->created_at->format('d M Y H:i') }} · {{ $h->actedBy?->name ?? __('System') }}</span>
+                            <span class="text-slate-400">· {{ $h->created_at->format(\App\Support\Regional::dateFormat().' '.\App\Support\Regional::timeFormat()) }} · {{ $h->actedBy?->name ?? __('System') }}</span>
                             @if ($h->rejection_reason) <p class="mt-1 text-rose-600">{{ $h->rejection_reason }}</p> @endif
                         </li>
                     @empty
@@ -325,7 +325,7 @@ new #[Title('Verification detail')] class extends Component
                     <div class="flex items-center justify-between border-b border-slate-100 px-5 py-4">
                         <div>
                             <h3 class="text-sm font-semibold">{{ $this->selectedDocument->type->label() }}</h3>
-                            <p class="text-[11px] text-slate-400">{{ $this->selectedDocument->original_name }} · {{ $this->selectedDocument->created_at->format('d M Y') }}</p>
+                            <p class="text-[11px] text-slate-400">{{ $this->selectedDocument->original_name }} · {{ $this->selectedDocument->created_at->format(\App\Support\Regional::dateFormat()) }}</p>
                         </div>
                         <x-status-badge :status="$this->selectedDocument->status" />
                     </div>
@@ -356,7 +356,7 @@ new #[Title('Verification detail')] class extends Component
                                     <button type="button" wire:click="toggleReveal" class="text-[11px] font-semibold text-blue-600">{{ $revealed ? __('Hide') : __('Reveal') }}</button>
                                 </dd>
                             </div>
-                            <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Upload Date') }}</dt><dd class="font-medium text-slate-800">{{ $this->selectedDocument->created_at->format('d M Y') }}</dd></div>
+                            <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Upload Date') }}</dt><dd class="font-medium text-slate-800">{{ $this->selectedDocument->created_at->format(\App\Support\Regional::dateFormat()) }}</dd></div>
                             <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Status') }}</dt><dd><x-status-badge :status="$this->selectedDocument->status" /></dd></div>
                             @if ($this->selectedDocument->notes)
                                 <div class="rounded-xl bg-slate-50 p-3 text-xs text-slate-600"><span class="font-semibold">{{ __('Rejection reason:') }}</span> {{ $this->selectedDocument->notes }}</div>

@@ -31,7 +31,7 @@ new #[Title('Audit Logs')] class extends Component
                     ->orWhereHas('user', fn ($query) => $query->whereRaw('LOWER(name) LIKE ?', [$term])));
             })
             ->latest()
-            ->paginate(20);
+            ->paginate(\App\Services\Settings\UserPreferenceService::rowsPerPageFor(auth()->user(), 20));
     }
 };
 ?>
@@ -71,7 +71,7 @@ new #[Title('Audit Logs')] class extends Component
                 <tbody class="divide-y divide-slate-100">
                     @forelse ($this->logs as $log)
                         <tr class="transition hover:bg-slate-50/70">
-                            <td class="whitespace-nowrap px-5 py-3 text-xs text-slate-500">{{ $log->created_at->format('d M Y H:i:s') }}</td>
+                            <td class="whitespace-nowrap px-5 py-3 text-xs text-slate-500">{{ $log->created_at->format(\App\Support\Regional::dateFormat().' '.\App\Support\Regional::timeFormat().':s') }}</td>
                             <td class="px-5 py-3 text-slate-700">{{ $log->user?->name ?? __('System') }}</td>
                             <td class="px-5 py-3">
                                 <span class="inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset {{ $log->action === 'created' ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : ($log->action === 'updated' ? 'bg-blue-50 text-blue-700 ring-blue-600/20' : 'bg-rose-50 text-rose-700 ring-rose-600/20') }}">

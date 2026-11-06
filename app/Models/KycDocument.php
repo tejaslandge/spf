@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Enums\KycDocumentType;
 use App\Enums\KycStatus;
 use App\Models\Concerns\Auditable;
+use App\Services\Settings\KycSettings;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -59,11 +60,21 @@ class KycDocument extends Model
     /** @return string[] */
     public static function mandatoryTypesFor(string $subjectType): array
     {
-        return match ($subjectType) {
-            Borrower::class => self::MANDATORY_BORROWER_TYPES,
-            Investor::class => self::MANDATORY_INVESTOR_TYPES,
-            default => [],
-        };
+        try {
+            return app(KycSettings::class)->mandatoryTypesFor($subjectType);
+        } catch (\Throwable) {
+            return match ($subjectType) {
+                Borrower::class => self::MANDATORY_BORROWER_TYPES,
+                Investor::class => self::MANDATORY_INVESTOR_TYPES,
+                default => [],
+            };
+        }
+    }
+
+    /** @return string[] */
+    public static function enabledTypesFor(string $subjectType): array
+    {
+        return app(KycSettings::class)->enabledTypesFor($subjectType);
     }
 
     /** @return array{pending: int, verified: int, rejected: int, total: int} */

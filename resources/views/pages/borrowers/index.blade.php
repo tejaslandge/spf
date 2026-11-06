@@ -20,7 +20,7 @@ new #[Title('Borrowers')] class extends Component
             ->withCount('loans')
             ->withSum('loans as outstanding_principal_sum', 'outstanding_principal')
             ->latest()
-            ->paginate(12);
+            ->paginate(\App\Services\Settings\UserPreferenceService::rowsPerPageFor(auth()->user(), 12));
     }
 };
 ?>

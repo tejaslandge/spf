@@ -23,7 +23,7 @@ new #[Title('Investors')] class extends Component
             ->withCount(['allocations' => fn ($query) => $query->where('status', 'active')])
             ->withSum(['allocations as active_capital_sum' => fn ($query) => $query->where('status', 'active')], 'principal_amount')
             ->latest()
-            ->paginate(12);
+            ->paginate(\App\Services\Settings\UserPreferenceService::rowsPerPageFor(auth()->user(), 12));
     }
 };
 ?>

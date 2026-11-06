@@ -29,11 +29,17 @@ class Setting extends Model
 
         // Cache plain attributes only; serializing Eloquent models breaks
         // across PHP/OPCache changes and leaks stale objects.
-        $attributes = Cache::get($cacheKey);
+        try {
+            $attributes = Cache::get($cacheKey);
+        } catch (Throwable) {
+            // A corrupt or stale cache entry must never break setting reads.
+            Cache::forget($cacheKey);
+            $attributes = null;
+        }
 
         if ($attributes === null) {
             $setting = static::query()->where('key', $key)->first();
-            $attributes = $setting?->getAttributes() ?? static::MISSING;
+            $attributes = $setting?->getAttributes() ?? self::MISSING;
 
             Cache::forever($cacheKey, $attributes);
         }
@@ -72,7 +78,7 @@ class Setting extends Model
         $stored = is_array($value) ? json_encode($value) : ($value === null ? null : (string) $value);
 
         if ($isSensitive && $stored !== null) {
-            $stored = Crypt::encryptString($stored);
+            $stored = Crypt::encryptString((string) $stored);
         }
 
         static::query()->updateOrCreate(

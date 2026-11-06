@@ -50,7 +50,7 @@ new #[Title('Payout History')] class extends Component
             })
             ->latest('period_month')
             ->latest('id')
-            ->paginate(20);
+            ->paginate(\App\Services\Settings\UserPreferenceService::rowsPerPageFor(auth()->user(), 20));
     }
 
     /**
@@ -149,7 +149,7 @@ new #[Title('Payout History')] class extends Component
                             <td class="whitespace-nowrap px-4 py-3 text-end tabular-nums text-slate-500">{{ \App\Support\Money::format($payout->tds_amount) }}</td>
                             <td class="whitespace-nowrap px-4 py-3 text-end font-semibold tabular-nums text-slate-800">{{ \App\Support\Money::format($payout->net_amount) }}</td>
                             <td class="px-4 py-3"><x-status-badge :status="$payout->status" /></td>
-                            <td class="whitespace-nowrap px-4 py-3 text-xs text-slate-500">{{ $payout->paid_at?->format('d M Y') ?? '—' }}</td>
+                            <td class="whitespace-nowrap px-4 py-3 text-xs text-slate-500">{{ $payout->paid_at?->format(\App\Support\Regional::dateFormat()) ?? '—' }}</td>
                             <td class="px-4 py-3 text-xs text-slate-500">{{ $payout->payment_reference ?: '—' }}</td>
                         </tr>
                     @empty

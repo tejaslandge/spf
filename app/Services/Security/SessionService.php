@@ -62,8 +62,40 @@ final class SessionService
         return DB::table('sessions')->where('user_id', $user->id)->delete();
     }
 
+    /**
+     * Revoke any session by id (Super Admin session management). The caller's
+     * own session can never be revoked through this method.
+     */
+    public function revokeAnyExceptCurrent(string $sessionId): bool
+    {
+        $currentId = request()->hasSession() ? request()->session()->getId() : null;
+
+        if ($currentId !== null && $sessionId === $currentId) {
+            return false;
+        }
+
+        return DB::table('sessions')->where('id', $sessionId)->delete() > 0;
+    }
+
+    /**
+     * @return Collection<int, \stdClass>
+     */
+    public function allActive(int $limit = 25): Collection
+    {
+        return DB::table('sessions')
+            ->leftJoin('users', 'users.id', '=', 'sessions.user_id')
+            ->select(['sessions.id', 'sessions.user_id', 'sessions.ip_address', 'sessions.user_agent', 'sessions.last_activity', 'users.name as user_name', 'users.email as user_email'])
+            ->orderByDesc('sessions.last_activity')
+            ->limit($limit)
+            ->get();
+    }
+
     public function enforceSingleSessionPolicy(User $user): void
     {
+        if (config('session.driver') !== 'database') {
+            return;
+        }
+
         if ($this->settings->get('security.concurrent_sessions', 'allow') === 'single') {
             $this->revokeOthers($user);
         }

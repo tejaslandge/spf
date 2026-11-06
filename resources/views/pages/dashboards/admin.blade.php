@@ -152,7 +152,7 @@
                                     <td class="px-5 py-3">
                                         <a href="{{ route('loans.show', $schedule->loan) }}" class="font-medium text-blue-600 hover:text-blue-700">{{ $schedule->loan->loan_code }}</a>
                                     </td>
-                                    <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $schedule->due_date->format('d M Y') }}</td>
+                                    <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $schedule->due_date->format(\App\Support\Regional::dateFormat()) }}</td>
                                     <td class="whitespace-nowrap px-5 py-3 text-end font-semibold tabular-nums text-slate-800">{{ \App\Support\Money::format($schedule->total_amount) }}</td>
                                     <td class="px-5 py-3"><x-status-badge :status="$schedule->status" /></td>
                                 </tr>

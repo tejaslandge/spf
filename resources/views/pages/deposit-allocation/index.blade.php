@@ -61,7 +61,7 @@ new #[Title('Deposit Allocation')] class extends Component
             $q->where('status', $this->status);
         }
 
-        $rows = $q->latest('deposited_at')->latest('id')->paginate(12);
+        $rows = $q->latest('deposited_at')->latest('id')->paginate(\App\Services\Settings\UserPreferenceService::rowsPerPageFor(auth()->user(), 12));
 
         $svc = app(DepositAllocationService::class);
         $rows->through(function (InvestorDeposit $d) use ($svc) {
@@ -200,7 +200,7 @@ new #[Title('Deposit Allocation')] class extends Component
                             <td class="whitespace-nowrap px-5 py-3 text-end tabular-nums text-slate-600">{{ \App\Support\Money::format($deposit->allocated_amount ?? '0.00') }}</td>
                             <td class="whitespace-nowrap px-5 py-3 text-end font-semibold tabular-nums {{ $deposit->status === \App\Enums\DepositStatus::Cleared ? 'text-emerald-700' : 'text-slate-500' }}">{{ \App\Support\Money::format($deposit->available_amount ?? '0.00') }}</td>
                             <td class="px-5 py-3"><x-status-badge :status="$deposit->status" /></td>
-                            <td class="whitespace-nowrap px-5 py-3 text-xs text-slate-500">{{ $deposit->deposited_at->format('d M Y') }}</td>
+                            <td class="whitespace-nowrap px-5 py-3 text-xs text-slate-500">{{ $deposit->deposited_at->format(\App\Support\Regional::dateFormat()) }}</td>
                             <td class="px-5 py-3 text-end">
                                 <div class="flex justify-end gap-1">
                                     <button type="button" wire:click="openModal({{ $deposit->id }})" class="text-[11px] font-semibold text-blue-600 hover:text-blue-700">{{ __('View') }}</button>
@@ -236,7 +236,7 @@ new #[Title('Deposit Allocation')] class extends Component
                 @forelse ($this->selectedHistory as $h)
                     <li class="rounded-lg border border-slate-100 px-3 py-2 text-xs">
                         <span>{{ $h->old_status?->value ?? '—' }} → <strong>{{ $h->new_status->value }}</strong></span>
-                        <span class="text-slate-400"> · {{ $h->created_at->format('d M Y H:i') }} · {{ $h->changedBy?->name ?? __('System') }}</span>
+                        <span class="text-slate-400"> · {{ $h->created_at->format(\App\Support\Regional::dateFormat().' '.\App\Support\Regional::timeFormat()) }} · {{ $h->changedBy?->name ?? __('System') }}</span>
                         @if ($h->rejection_reason) <p class="mt-1 text-rose-600">{{ $h->rejection_reason }}</p> @endif
                         @if ($h->notes) <p class="mt-1 text-slate-500">{{ $h->notes }}</p> @endif
                     </li>

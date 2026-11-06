@@ -3,11 +3,14 @@
 namespace App\Services;
 
 use App\Enums\KycStatus;
+use App\Enums\Permission;
 use App\Models\Borrower;
 use App\Models\Investor;
 use App\Models\KycDocument;
 use App\Models\KycVerificationHistory;
 use App\Models\User;
+use App\Services\Notifications\StaffNotifier;
+use App\Services\Settings\KycSettings;
 use App\Support\AuditLogger;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -16,9 +19,14 @@ use InvalidArgumentException;
 
 final class KycVerificationService
 {
+    public function __construct(
+        private readonly KycSettings $settings,
+        private readonly StaffNotifier $notifier,
+    ) {}
+
     public function setDocumentStatus(KycDocument $doc, KycStatus $status, ?string $reason, User $actor): KycDocument
     {
-        if ($status === KycStatus::Rejected && blank($reason)) {
+        if ($status === KycStatus::Rejected && blank($reason) && $this->settings->rejectionReasonRequired()) {
             throw ValidationException::withMessages([
                 'rejection_reason' => 'A rejection reason is required.',
             ]);
@@ -100,7 +108,7 @@ final class KycVerificationService
 
             $overall = KycDocument::overallStatusFor($subjectType, $subjectId);
 
-            if ($pending > 0 || $rejected > 0) {
+            if (($pending > 0 || $rejected > 0) && $this->settings->mandatoryMustBeVerified()) {
                 throw new InvalidArgumentException('All mandatory documents must be verified before approval. Pending: '.$pending.', Rejected: '.$rejected.'.');
             }
 
@@ -122,6 +130,17 @@ final class KycVerificationService
                     'kyc_status' => KycStatus::Verified->value,
                 ]);
             }
+
+            $this->notifier->notifyPermission(
+                $subjectType === Borrower::class ? Permission::BorrowersVerifyDocuments : Permission::InvestorsVerifyDocuments,
+                'document_updates',
+                __('KYC approved'),
+                $this->subjectLabel($subjectType, $subjectId, $subject).' KYC was verified.',
+                $subjectType === Borrower::class
+                    ? route('super-admin.verification.borrowers')
+                    : route('super-admin.verification.investors'),
+                $actor,
+            );
 
             return ['verified' => true, 'overall' => KycStatus::Verified, 'pending' => 0, 'rejected' => 0];
         });
@@ -154,7 +173,31 @@ final class KycVerificationService
                     'rejection_reason' => trim($reason),
                 ]);
             }
+
+            $this->notifier->notifyPermission(
+                $subjectType === Borrower::class ? Permission::BorrowersVerifyDocuments : Permission::InvestorsVerifyDocuments,
+                'document_updates',
+                __('KYC rejected'),
+                $this->subjectLabel($subjectType, $subjectId, $subject).' KYC was rejected: '.trim($reason),
+                $subjectType === Borrower::class
+                    ? route('super-admin.verification.borrowers')
+                    : route('super-admin.verification.investors'),
+                $actor,
+            );
         });
+    }
+
+    private function subjectLabel(string $subjectType, int $subjectId, ?Model $subject): string
+    {
+        if ($subject instanceof Borrower) {
+            return $subject->full_name;
+        }
+
+        if ($subject instanceof Investor) {
+            return $subject->name;
+        }
+
+        return ucfirst(str_contains($subjectType, 'Borrower') ? 'Borrower' : 'Investor').' #'.$subjectId;
     }
 
     private function resolveSubject(string $type, int $id): ?Model

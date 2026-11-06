@@ -99,6 +99,19 @@ final class UserPreferenceService
         Cache::forget($this->cacheKey($user));
     }
 
+    /**
+     * Rows-per-page preference for the given user, falling back to the page's
+     * own default when the user has never customised it.
+     */
+    public static function rowsPerPageFor(?User $user, int $default = 12): int
+    {
+        if ($user === null) {
+            return $default;
+        }
+
+        return max(5, min(100, app(self::class)->getInt($user, 'rows_per_page', $default)));
+    }
+
     public function allowsChannel(User $user, string $channel): bool
     {
         return match ($channel) {

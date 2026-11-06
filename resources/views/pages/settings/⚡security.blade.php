@@ -1,5 +1,8 @@
 <?php
 
+use App\Services\Security\SessionService;
+use App\Support\SessionDevice;
+use Flux\Flux;
 use Laravel\Fortify\Actions\DisableTwoFactorAuthentication;
 use Laravel\Fortify\Features;
 use Laravel\Fortify\Fortify;
@@ -38,6 +41,13 @@ new #[Title('Security')] class extends Component {
     public string $deletingPasskeyName = '';
     /* @end-chisel-passkeys */
 
+    /* @end-chisel-2fa */
+
+    /**
+     * @var array<int, array{id: string, browser: string, platform: string, ip: string|null, last_active: string, is_current: bool}>
+     */
+    public array $sessions = [];
+
     /**
      * Mount the component.
      */
@@ -63,6 +73,60 @@ new #[Title('Security')] class extends Component {
             $this->loadPasskeys();
         }
         /* @end-chisel-passkeys */
+
+        $this->loadSessions();
+    }
+
+    /**
+     * Load the database-backed sessions for the authenticated user.
+     */
+    public function loadSessions(): void
+    {
+        if (config('session.driver') !== 'database') {
+            $this->sessions = [];
+
+            return;
+        }
+
+        $this->sessions = app(SessionService::class)
+            ->activeFor(auth()->user())
+            ->map(fn (SessionDevice $device): array => [
+                'id' => $device->id,
+                'browser' => $device->browser(),
+                'platform' => $device->platform(),
+                'ip' => $device->ipAddress,
+                'last_active' => $device->lastActivity->diffForHumans(),
+                'is_current' => $device->isCurrent,
+            ])
+            ->toArray();
+    }
+
+    /**
+     * Revoke another signed-in session.
+     */
+    public function revokeSession(string $sessionId): void
+    {
+        if (app(SessionService::class)->revoke($sessionId, auth()->user())) {
+            $this->loadSessions();
+
+            Flux::toast(variant: 'success', text: __('Session revoked.'));
+
+            return;
+        }
+
+        Flux::toast(variant: 'danger', text: __('The current session cannot be revoked from here.'));
+    }
+
+    /**
+     * Revoke every other session for the authenticated user.
+     */
+    public function revokeOtherSessions(): void
+    {
+        $count = app(SessionService::class)->revokeOthers(auth()->user());
+
+        $this->loadSessions();
+
+        Flux::toast(variant: 'success', text: trans_choice('{1} :count session revoked.|[2,*] :count sessions revoked.', $count, ['count' => $count]));
     }
 
     /* @chisel-passkeys */
@@ -154,7 +218,17 @@ new #[Title('Security')] class extends Component {
 
 <section class="w-full">
     <x-pages::settings.layout :heading="__('Security')" :subheading="__('Your password, two-factor authentication and passkeys.')">
-        @if (session('status'))
+        @if (session('status') === 'password-expired')
+            <div class="mb-5 flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900" role="alert">
+                <flux:icon.exclamation-triangle class="mt-0.5 size-5 shrink-0 text-amber-600" />
+                <span>{{ __('Your password has expired under the organisation password policy. Please set a new password to continue.') }}</span>
+            </div>
+        @elseif (session('status') === 'two-factor-required')
+            <div class="mb-5 flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900" role="alert">
+                <flux:icon.shield-exclamation class="mt-0.5 size-5 shrink-0 text-amber-600" />
+                <span>{{ __('Two-factor authentication is required for your role. Enable it below to continue.') }}</span>
+            </div>
+        @elseif (session('status'))
             <div class="mb-5 flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800" role="status">
                 <flux:icon.check-circle class="mt-0.5 size-5 shrink-0 text-emerald-600" />
                 <span>{{ session('status') }}</span>
@@ -217,6 +291,65 @@ new #[Title('Security')] class extends Component {
         {{-- Change password --}}
         <div class="mt-6">
             @include('pages.settings.partials.change-password')
+        </div>
+
+        {{-- Active sessions --}}
+        <div class="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div class="flex items-center gap-3">
+                    <span class="flex size-9 items-center justify-center rounded-lg bg-navy-50 text-navy-700 ring-1 ring-navy-600/10">
+                        <flux:icon.computer-desktop class="size-4" />
+                    </span>
+                    <div>
+                        <h2 class="text-sm font-semibold text-slate-900">{{ __('Active sessions') }}</h2>
+                        <p class="text-xs text-slate-500">{{ __('Devices currently signed in with your account.') }}</p>
+                    </div>
+                </div>
+                @if (count($sessions) > 1)
+                    <flux:button variant="outline" size="sm" wire:click="revokeOtherSessions">
+                        {{ __('Sign out other sessions') }}
+                    </flux:button>
+                @endif
+            </div>
+
+            <div class="mt-4 overflow-hidden rounded-xl border border-slate-200">
+                @forelse ($sessions as $session)
+                    <div class="flex items-center justify-between gap-4 p-4 {{ ! $loop->last ? 'border-b border-slate-200' : '' }}" wire:key="session-{{ $session['id'] }}">
+                        <div class="flex min-w-0 items-center gap-4">
+                            <div class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-slate-100">
+                                <flux:icon.computer-desktop class="size-5 text-slate-500" />
+                            </div>
+                            <div class="min-w-0 space-y-1">
+                                <p class="truncate text-sm font-medium text-slate-900">
+                                    {{ $session['browser'] }} · {{ $session['platform'] }}
+                                    @if ($session['is_current'])
+                                        <span class="ms-2 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-600/20">{{ __('This device') }}</span>
+                                    @endif
+                                </p>
+                                <p class="text-[11px] text-slate-500">
+                                    {{ $session['ip'] ?? __('unknown IP') }}
+                                    <span class="mx-1 opacity-50">/</span>
+                                    {{ __('Last active :time', ['time' => $session['last_active']]) }}
+                                </p>
+                            </div>
+                        </div>
+
+                        @unless ($session['is_current'])
+                            <flux:button variant="ghost" size="sm" wire:click="revokeSession('{{ $session['id'] }}')" class="shrink-0 text-red-500 hover:bg-red-50 hover:text-red-600">
+                                {{ __('Revoke') }}
+                            </flux:button>
+                        @endunless
+                    </div>
+                @empty
+                    <div class="p-8 text-center">
+                        <div class="mx-auto mb-4 flex size-14 items-center justify-center rounded-2xl bg-slate-100">
+                            <flux:icon.computer-desktop class="size-7 text-slate-400" />
+                        </div>
+                        <p class="text-sm font-medium text-slate-900">{{ __('No session records') }}</p>
+                        <p class="mt-1 text-xs text-slate-500">{{ __('Session tracking is available when the database session driver is enabled.') }}</p>
+                    </div>
+                @endforelse
+            </div>
         </div>
 
         {{-- @chisel-2fa --}}

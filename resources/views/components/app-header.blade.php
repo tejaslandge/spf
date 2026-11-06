@@ -18,7 +18,7 @@
             <p class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                 <span>{{ $section }}</span>
                 <span class="hidden size-1 rounded-full bg-slate-300 sm:block"></span>
-                <span class="hidden sm:inline">{{ now()->format('D, d M Y') }}</span>
+                <span class="hidden sm:inline">{{ now()->format('D, '.\App\Support\Regional::dateFormat()) }}</span>
             </p>
             <h1 class="truncate text-[15px] font-semibold tracking-tight text-slate-900">
                 {{ $title ?? __('Dashboard') }}
@@ -37,11 +37,7 @@
                 <span class="hidden lg:inline">{{ __('Payouts') }}</span>
             </a>
 
-            <button type="button" class="relative flex size-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-slate-300 hover:text-slate-900">
-                <flux:icon.bell class="size-4" />
-                <span class="absolute end-2.5 top-2.5 size-1.5 rounded-full bg-rose-500 ring-2 ring-white"></span>
-                <span class="sr-only">{{ __('Notifications') }}</span>
-            </button>
+            <livewire:notifications-bell />
 
             <span class="mx-1 hidden h-6 w-px bg-slate-200 sm:block"></span>
 

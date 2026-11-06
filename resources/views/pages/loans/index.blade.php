@@ -35,7 +35,7 @@ new #[Title('Loans')] class extends Component
             ])
             ->withMin(['schedules as next_due_date' => fn ($query) => $query->whereNotIn('status', ['paid', 'waived'])], 'due_date')
             ->latest()
-            ->paginate(12);
+            ->paginate(\App\Services\Settings\UserPreferenceService::rowsPerPageFor(auth()->user(), 12));
     }
 
     /**
@@ -127,7 +127,7 @@ new #[Title('Loans')] class extends Component
                             </td>
                             <td class="whitespace-nowrap px-5 py-3 text-end tabular-nums text-slate-700">{{ \App\Support\Money::format($loan->principal_amount) }}</td>
                             <td class="whitespace-nowrap px-5 py-3 text-end tabular-nums text-slate-700">{{ \App\Support\Money::format($loan->emi_amount) }}</td>
-                            <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $loan->next_due_date ? \Illuminate\Support\Carbon::parse($loan->next_due_date)->format('d M Y') : '—' }}</td>
+                            <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $loan->next_due_date ? \Illuminate\Support\Carbon::parse($loan->next_due_date)->format(\App\Support\Regional::dateFormat()) : '—' }}</td>
                             <td class="whitespace-nowrap px-5 py-3 text-end font-semibold tabular-nums text-slate-800">{{ \App\Support\Money::format($loan->outstanding_principal) }}</td>
                             <td class="px-5 py-3"><x-status-badge :status="$loan->status" /> <x-status-badge :status="$loan->application_status" class="mt-0.5 !px-1.5 !py-0.5 !text-[9px]" /></td>
                             <td class="px-5 py-3 text-end">

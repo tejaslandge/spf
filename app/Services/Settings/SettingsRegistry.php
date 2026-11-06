@@ -37,6 +37,7 @@ final class SettingsRegistry
             'company.legal_name' => ['group' => self::GROUP_COMPANY, 'type' => 'string', 'default' => '', 'label' => 'Company legal name'],
             'company.registration_number' => ['group' => self::GROUP_COMPANY, 'type' => 'string', 'default' => '', 'label' => 'Registration number'],
             'company.email' => ['group' => self::GROUP_COMPANY, 'type' => 'string', 'default' => '', 'label' => 'Company email'],
+            'company.phone' => ['group' => self::GROUP_COMPANY, 'type' => 'string', 'default' => '', 'label' => 'Company phone number'],
             'company.support_email' => ['group' => self::GROUP_COMPANY, 'type' => 'string', 'default' => '', 'label' => 'Support email'],
             'company.support_mobile' => ['group' => self::GROUP_COMPANY, 'type' => 'string', 'default' => '', 'label' => 'Support mobile number'],
             'company.address' => ['group' => self::GROUP_COMPANY, 'type' => 'string', 'default' => '', 'label' => 'Company address'],

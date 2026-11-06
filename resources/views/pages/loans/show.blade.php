@@ -483,7 +483,7 @@ new #[Title('Loan details')] class extends Component
     </div>
 
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <x-stat-card :label="__('Principal')" :value="\App\Support\Money::format($loan->principal_amount)" :hint="__('Disbursed :date', ['date' => $loan->disbursement_date?->format('d M Y') ?? __('pending')])" icon="banknotes" tone="navy" />
+        <x-stat-card :label="__('Principal')" :value="\App\Support\Money::format($loan->principal_amount)" :hint="__('Disbursed :date', ['date' => $loan->disbursement_date?->format(\App\Support\Regional::dateFormat()) ?? __('pending')])" icon="banknotes" tone="navy" />
         <x-stat-card :label="__('Monthly EMI')" :value="\App\Support\Money::format($loan->emi_amount)" :hint="__(':count installments', ['count' => $this->schedules->count()])" icon="calendar-days" tone="blue" />
         <x-stat-card :label="__('Outstanding principal')" :value="\App\Support\Money::format($loan->outstanding_principal)" :hint="__('of :amount', ['amount' => \App\Support\Money::format($loan->principal_amount)])" icon="scale" tone="amber" />
         <x-stat-card :label="__('Collected')" :value="\App\Support\Money::format($loan->paidAmount())" :hint="__(':percent% of schedule settled', ['percent' => $this->progress])" icon="arrow-down-tray" tone="emerald" />
@@ -517,7 +517,7 @@ new #[Title('Loan details')] class extends Component
                             @foreach ($this->schedules as $schedule)
                                 <tr class="transition hover:bg-slate-50/70">
                                     <td class="px-5 py-2.5 text-xs text-slate-400">{{ $schedule->installment_no }}</td>
-                                    <td class="whitespace-nowrap px-5 py-2.5 text-slate-600">{{ $schedule->due_date->format('d M Y') }}</td>
+                                    <td class="whitespace-nowrap px-5 py-2.5 text-slate-600">{{ $schedule->due_date->format(\App\Support\Regional::dateFormat()) }}</td>
                                     <td class="whitespace-nowrap px-5 py-2.5 text-end tabular-nums text-slate-600">{{ \App\Support\Money::format($schedule->principal_amount) }}</td>
                                     <td class="whitespace-nowrap px-5 py-2.5 text-end tabular-nums text-slate-600">{{ \App\Support\Money::format($schedule->interest_amount) }}</td>
                                     <td class="whitespace-nowrap px-5 py-2.5 text-end font-semibold tabular-nums text-slate-800">{{ \App\Support\Money::format($schedule->total_amount) }}</td>
@@ -553,7 +553,7 @@ new #[Title('Loan details')] class extends Component
                             @forelse ($this->payments as $payment)
                                 <tr>
                                     <td class="px-5 py-2.5 font-medium text-slate-800">{{ $payment->receipt_no }}</td>
-                                    <td class="whitespace-nowrap px-5 py-2.5 text-slate-600">{{ $payment->payment_date->format('d M Y') }}</td>
+                                    <td class="whitespace-nowrap px-5 py-2.5 text-slate-600">{{ $payment->payment_date->format(\App\Support\Regional::dateFormat()) }}</td>
                                     <td class="px-5 py-2.5 text-slate-600">{{ $payment->payment_method->label() }}</td>
                                     <td class="whitespace-nowrap px-5 py-2.5 text-end font-semibold tabular-nums text-slate-800">{{ \App\Support\Money::format($payment->amount) }}</td>
                                     <td class="whitespace-nowrap px-5 py-2.5 text-end tabular-nums text-slate-600">{{ \App\Support\Money::format($payment->principal_component) }}</td>
@@ -576,7 +576,7 @@ new #[Title('Loan details')] class extends Component
                     <div class="flex justify-between"><dt class="text-slate-400">{{ __('Monthly rate') }}</dt><dd class="font-medium">{{ rtrim(rtrim(number_format((float) $loan->annual_interest_rate / 12, 4), '0'), '.') }}%</dd></div>
                     <div class="flex justify-between"><dt class="text-slate-400">{{ __('Annual rate') }}</dt><dd class="font-medium">{{ rtrim(rtrim($loan->annual_interest_rate, '0'), '.') }}%</dd></div>
                     <div class="flex justify-between"><dt class="text-slate-400">{{ __('Tenure') }}</dt><dd class="font-medium">{{ $loan->tenure_months }} {{ __('months') }}</dd></div>
-                    <div class="flex justify-between"><dt class="text-slate-400">{{ __('First EMI') }}</dt><dd class="font-medium">{{ $loan->first_emi_date->format('d M Y') }}</dd></div>
+                    <div class="flex justify-between"><dt class="text-slate-400">{{ __('First EMI') }}</dt><dd class="font-medium">{{ $loan->first_emi_date->format(\App\Support\Regional::dateFormat()) }}</dd></div>
                     <div class="flex justify-between"><dt class="text-slate-400">{{ __('Total interest') }}</dt><dd class="font-medium tabular-nums">{{ \App\Support\Money::format($loan->total_interest) }}</dd></div>
                     <div class="flex justify-between"><dt class="text-slate-400">{{ __('Total payable') }}</dt><dd class="font-semibold tabular-nums">{{ \App\Support\Money::format($loan->total_payable) }}</dd></div>
                     <div class="flex justify-between"><dt class="text-slate-400">{{ __('Foreclosure charge') }}</dt><dd class="font-medium tabular-nums">{{ \App\Support\Money::format($loan->foreclosure_charge) }}</dd></div>
@@ -614,10 +614,10 @@ new #[Title('Loan details')] class extends Component
                     @if ($this->latestOffer->accepted_at !== null)
                         <div class="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3 text-xs leading-relaxed text-emerald-900">
                             <p class="flex items-center gap-1.5 font-semibold"><flux:icon.lock-closed class="size-3.5 shrink-0" />{{ __('Terms snapshot locked') }}</p>
-                            <p class="mt-1">{{ __('Accepted on :date · :amount, :rate%, :method, :months months', ['date' => $this->latestOffer->accepted_at?->format('d M Y, H:i'), 'amount' => \App\Support\Money::format($this->latestOffer->principal_amount), 'rate' => rtrim(rtrim((string) $this->latestOffer->annual_interest_rate, '0'), '.'), 'method' => $this->latestOffer->interest_method->label(), 'months' => $this->latestOffer->tenure_months]) }}</p>
+                            <p class="mt-1">{{ __('Accepted on :date · :amount, :rate%, :method, :months months', ['date' => $this->latestOffer->accepted_at?->format(\App\Support\Regional::dateFormat().', '.\App\Support\Regional::timeFormat()), 'amount' => \App\Support\Money::format($this->latestOffer->principal_amount), 'rate' => rtrim(rtrim((string) $this->latestOffer->annual_interest_rate, '0'), '.'), 'method' => $this->latestOffer->interest_method->label(), 'months' => $this->latestOffer->tenure_months]) }}</p>
                         </div>
                     @else
-                        <p class="mt-4 text-[11px] text-slate-400">{{ __('Latest offer issued :date — awaiting borrower acceptance.', ['date' => $this->latestOffer->offered_at->format('d M Y, H:i')]) }}</p>
+                        <p class="mt-4 text-[11px] text-slate-400">{{ __('Latest offer issued :date — awaiting borrower acceptance.', ['date' => $this->latestOffer->offered_at->format(\App\Support\Regional::dateFormat().', '.\App\Support\Regional::timeFormat())]) }}</p>
                     @endif
                 @endif
             </div>
@@ -727,7 +727,7 @@ new #[Title('Loan details')] class extends Component
                 @elseif ($loan->funding_locked_at)
                     <p class="mt-4 flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-[11px] font-medium leading-relaxed text-emerald-800">
                         <flux:icon.lock-closed class="size-4 shrink-0" />
-                        {{ __('Fully funded. Capital reserved &amp; locked · :date.', ['date' => $this->loan->funding_locked_at->format('d M Y, H:i')]) }}
+                        {{ __('Fully funded. Capital reserved &amp; locked · :date.', ['date' => $this->loan->funding_locked_at->format(\App\Support\Regional::dateFormat().', '.\App\Support\Regional::timeFormat())]) }}
                     </p>
                 @endif
 
@@ -738,7 +738,7 @@ new #[Title('Loan details')] class extends Component
                             <li class="flex items-center justify-between gap-3 rounded-xl bg-slate-50 p-2.5">
                                 <div class="min-w-0">
                                     <p class="truncate text-xs font-semibold text-slate-800">{{ $allocation->investor->name }}</p>
-                                    <p class="text-[11px] text-slate-400">{{ $allocation->investor->investor_code }} · {{ $allocation->allocation_date?->format('d M Y') }}</p>
+                                    <p class="text-[11px] text-slate-400">{{ $allocation->investor->investor_code }} · {{ $allocation->allocation_date?->format(\App\Support\Regional::dateFormat()) }}</p>
                                 </div>
                                 <span class="text-xs font-semibold tabular-nums text-slate-700">{{ \App\Support\Money::format($allocation->principal_amount) }}</span>
                             </li>

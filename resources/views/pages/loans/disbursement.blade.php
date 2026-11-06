@@ -100,7 +100,7 @@ new #[Title('Disbursement')] class extends Component
             <div class="fc-card flex flex-wrap items-center gap-3 border-emerald-200 bg-emerald-50/60 p-5">
                 <flux:icon.check-circle class="size-5 shrink-0 text-emerald-600" />
                 <p class="min-w-0 flex-1 text-xs leading-relaxed text-emerald-900">
-                    {{ __('Disbursed on :date. Payment reference: :ref.', ['date' => $loan->disbursement_date->format('d M Y'), 'ref' => $loan->disbursement_reference ?: '—']) }}
+                    {{ __('Disbursed on :date. Payment reference: :ref.', ['date' => $loan->disbursement_date->format(\App\Support\Regional::dateFormat()), 'ref' => $loan->disbursement_reference ?: '—']) }}
                 </p>
             </div>
         @else
@@ -131,8 +131,8 @@ new #[Title('Disbursement')] class extends Component
                                 <div class="h-full rounded-full bg-emerald-500" style="width: {{ $this->funding['percent'] }}%"></div>
                             </div>
                             <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
-                                <span>{{ __('Capital verified: :result', ['result' => $this->capitalVerified ? ($loan->capital_verified_at->format('d M Y, H:i')) : 'no']) }}</span>
-                                <span>{{ __('Final approval: :result', ['result' => $loan->final_approved_at !== null ? $loan->final_approved_at->format('d M Y, H:i') : 'pending']) }}</span>
+                                <span>{{ __('Capital verified: :result', ['result' => $this->capitalVerified ? ($loan->capital_verified_at->format(\App\Support\Regional::dateFormat().', '.\App\Support\Regional::timeFormat())) : 'no']) }}</span>
+                                <span>{{ __('Final approval: :result', ['result' => $loan->final_approved_at !== null ? $loan->final_approved_at->format(\App\Support\Regional::dateFormat().', '.\App\Support\Regional::timeFormat()) : 'pending']) }}</span>
                             </div>
                         </div>
 
@@ -152,7 +152,7 @@ new #[Title('Disbursement')] class extends Component
                                     <li class="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-3" wire:key="disb-alloc-{{ $allocation->id }}">
                                         <div class="min-w-0">
                                             <p class="truncate text-xs font-semibold text-slate-800">{{ $allocation->investor->name }}</p>
-                                            <p class="text-[11px] text-slate-400">{{ $allocation->investor->investor_code }} · {{ $allocation->allocation_date?->format('d M Y') }}</p>
+                                            <p class="text-[11px] text-slate-400">{{ $allocation->investor->investor_code }} · {{ $allocation->allocation_date?->format(\App\Support\Regional::dateFormat()) }}</p>
                                         </div>
                                         <span class="text-xs font-semibold tabular-nums">{{ Money::format($allocation->principal_amount) }}</span>
                                     </li>
@@ -236,7 +236,7 @@ new #[Title('Disbursement')] class extends Component
                     @else
                         <p class="mt-5 flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-[11px] font-medium leading-relaxed text-emerald-800">
                             <flux:icon.check-circle class="size-4 shrink-0" />
-                            {{ __('Authorised by :name on :date. Record the payment opposite.', ['name' => $loan->finalApprovedBy?->name ?? '—', 'date' => $loan->final_approved_at->format('d M Y, H:i')]) }}
+                            {{ __('Authorised by :name on :date. Record the payment opposite.', ['name' => $loan->finalApprovedBy?->name ?? '—', 'date' => $loan->final_approved_at->format(\App\Support\Regional::dateFormat().', '.\App\Support\Regional::timeFormat())]) }}
                         </p>
                         <p class="mt-2 text-center text-[10px] text-slate-400">{{ __('Use the payment form on the left to make the loan Active.') }}</p>
                     @endif

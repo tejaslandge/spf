@@ -220,7 +220,7 @@ new #[Title('Loan Distribution')] class extends Component
                         <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Investor pool') }}</dt><dd class="font-medium text-blue-700">{{ rtrim(rtrim((string) $config->investor_allocation_percent, '0'), '.') }}%</dd></div>
                         <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Admin pool') }}</dt><dd class="font-medium text-violet-700">{{ rtrim(rtrim((string) $config->admin_allocation_percent, '0'), '.') }}%</dd></div>
                         <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Company pool') }}</dt><dd class="font-medium text-emerald-700">{{ rtrim(rtrim((string) $config->company_allocation_percent, '0'), '.') }}%</dd></div>
-                        <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Locked at') }}</dt><dd class="font-medium text-slate-800">{{ $config->locked_at?->format('d M Y, H:i') ?? '—' }}</dd></div>
+                        <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Locked at') }}</dt><dd class="font-medium text-slate-800">{{ $config->locked_at?->format(\App\Support\Regional::dateFormat().', '.\App\Support\Regional::timeFormat()) ?? '—' }}</dd></div>
                     </dl>
                 @else
                     <p class="mt-4 rounded-xl border border-dashed border-slate-200 px-3 py-6 text-center text-xs text-slate-400">{{ __('No snapshot exists yet. It is created automatically on disbursement, or manually by a Super Admin.') }}</p>

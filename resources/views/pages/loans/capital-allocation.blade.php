@@ -93,7 +93,7 @@ new #[Title('Capital allocation')] class extends Component
             <div class="fc-card flex flex-wrap items-center gap-3 border-emerald-200 bg-emerald-50/60 p-5">
                 <flux:icon.lock-closed class="size-5 shrink-0 text-emerald-600" />
                 <p class="min-w-0 flex-1 text-xs leading-relaxed text-emerald-900">
-                    {{ __('Fully funded on :date — funding is locked and allocation records are in place. Continue to final approval and disbursement.', ['date' => $this->loan->funding_locked_at->format('d M Y, H:i')]) }}
+                    {{ __('Fully funded on :date — funding is locked and allocation records are in place. Continue to final approval and disbursement.', ['date' => $this->loan->funding_locked_at->format(\App\Support\Regional::dateFormat().', '.\App\Support\Regional::timeFormat())]) }}
                 </p>
                 <a href="{{ route('loans.disbursement', $loan) }}" wire:navigate class="rounded-xl bg-navy-900 px-3.5 py-2.5 text-xs font-semibold text-white transition hover:bg-navy-800">{{ __('Go to disbursement') }}</a>
             </div>
@@ -105,7 +105,7 @@ new #[Title('Capital allocation')] class extends Component
                         <li class="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-3" wire:key="alloc-{{ $allocation->id }}">
                             <div>
                                 <p class="text-xs font-semibold text-slate-800">{{ $allocation->investor->name }}</p>
-                                <p class="text-[11px] text-slate-400">{{ $allocation->investor->investor_code }} · {{ $allocation->allocation_date?->format('d M Y') }}</p>
+                                <p class="text-[11px] text-slate-400">{{ $allocation->investor->investor_code }} · {{ $allocation->allocation_date?->format(\App\Support\Regional::dateFormat()) }}</p>
                             </div>
                             <span class="text-xs font-semibold tabular-nums">{{ Money::format($allocation->principal_amount) }}</span>
                         </li>

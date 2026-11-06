@@ -4,11 +4,13 @@ namespace App\Services;
 
 use App\Enums\EmiStatus;
 use App\Enums\LoanStatus;
+use App\Enums\Permission;
 use App\Models\EmiPayment;
 use App\Models\EmiPaymentAllocation;
 use App\Models\EmiSchedule;
 use App\Models\Loan;
 use App\Models\User;
+use App\Services\Notifications\StaffNotifier;
 use App\Support\AuditLogger;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
@@ -20,6 +22,7 @@ class EmiCollectionService
     public function __construct(
         private readonly JournalService $journal,
         private readonly InterestDistributionService $distribution,
+        private readonly StaffNotifier $notifier,
     ) {}
 
     /**
@@ -163,6 +166,15 @@ class EmiCollectionService
             );
 
             $this->distribution->distributeForPayment($payment->refresh(), $actor);
+
+            $this->notifier->notifyPermission(
+                Permission::RepaymentsView,
+                'repayment_updates',
+                __('EMI receipt posted'),
+                $loan->loan_code.' · '.$payment->receipt_no.' · '.Money::format($amount),
+                route('collections.index'),
+                $actor,
+            );
 
             return $payment->load('schedule', 'loan');
         });

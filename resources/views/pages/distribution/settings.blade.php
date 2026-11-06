@@ -292,7 +292,7 @@ new #[Title('Interest & Distribution Settings')] class extends Component
                 <span>{{ __('Borrower :rate%/mo', ['rate' => rtrim(rtrim((string) $this->activeConfiguration->borrower_monthly_rate, '0'), '.')]) }}</span>
                 <span>{{ __('Investor :rate%/mo', ['rate' => rtrim(rtrim((string) $this->activeConfiguration->default_investor_monthly_rate, '0'), '.')]) }}</span>
                 <span>{{ __('Split :split', ['split' => rtrim(rtrim((string) $this->activeConfiguration->investor_allocation_percent, '0'), '.') . ' / ' . rtrim(rtrim((string) $this->activeConfiguration->admin_allocation_percent, '0'), '.') . ' / ' . rtrim(rtrim((string) $this->activeConfiguration->company_allocation_percent, '0'), '.')]) }}</span>
-                <span>{{ __('Effective :date', ['date' => $this->activeConfiguration->effective_from->format('d M Y')]) }}</span>
+                <span>{{ __('Effective :date', ['date' => $this->activeConfiguration->effective_from->format(\App\Support\Regional::dateFormat())]) }}</span>
             </div>
         </div>
     @else
@@ -331,7 +331,7 @@ new #[Title('Interest & Distribution Settings')] class extends Component
                                 <p class="font-medium text-slate-800">{{ $configuration->name }}</p>
                                 <p class="text-[11px] text-slate-400">{{ __('Default investor :rate%/mo · admin commission :admin%', ['rate' => rtrim(rtrim((string) $configuration->default_investor_monthly_rate, '0'), '.'), 'admin' => rtrim(rtrim((string) ($configuration->default_admin_commission_rate ?? '0'), '0'), '.')]) }}</p>
                             </td>
-                            <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $configuration->effective_from->format('d M Y') }}</td>
+                            <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $configuration->effective_from->format(\App\Support\Regional::dateFormat()) }}</td>
                             <td class="whitespace-nowrap px-5 py-3 text-end tabular-nums text-slate-600">{{ rtrim(rtrim((string) $configuration->borrower_monthly_rate, '0'), '.') }}%</td>
                             <td class="whitespace-nowrap px-5 py-3 text-end tabular-nums text-blue-700">{{ rtrim(rtrim((string) $configuration->investor_allocation_percent, '0'), '.') }}%</td>
                             <td class="whitespace-nowrap px-5 py-3 text-end tabular-nums text-violet-700">{{ rtrim(rtrim((string) $configuration->admin_allocation_percent, '0'), '.') }}%</td>
@@ -392,8 +392,8 @@ new #[Title('Interest & Distribution Settings')] class extends Component
                                 <p class="text-[11px] text-slate-400">{{ $rate->investor->investor_code }}</p>
                             </td>
                             <td class="whitespace-nowrap px-5 py-3 text-end font-semibold tabular-nums text-slate-800">{{ rtrim(rtrim((string) $rate->monthly_rate, '0'), '.') }}%</td>
-                            <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $rate->effective_from->format('d M Y') }}</td>
-                            <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $rate->effective_to?->format('d M Y') ?? '—' }}</td>
+                            <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $rate->effective_from->format(\App\Support\Regional::dateFormat()) }}</td>
+                            <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $rate->effective_to?->format(\App\Support\Regional::dateFormat()) ?? '—' }}</td>
                             <td class="px-5 py-3">
                                 <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset {{ $rate->is_active ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-slate-100 text-slate-600 ring-slate-500/20' }}">
                                     {{ $rate->is_active ? __('Active') : __('Inactive') }}

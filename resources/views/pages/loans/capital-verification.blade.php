@@ -140,7 +140,7 @@ new #[Title('Capital verification')] class extends Component
                 @if ($loan->capital_verified_at)
                     <p class="inline-flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-[11px] font-medium text-emerald-800">
                         <flux:icon.lock-closed class="size-4 shrink-0" />
-                        {{ __('Verified on :date. Capital allocation is unlocked.', ['date' => $loan->capital_verified_at->format('d M Y, H:i')]) }}
+                        {{ __('Verified on :date. Capital allocation is unlocked.', ['date' => $loan->capital_verified_at->format(\App\Support\Regional::dateFormat().', '.\App\Support\Regional::timeFormat())]) }}
                     </p>
                 @else
                     <button type="button" wire:click="confirmVerified" wire:confirm="{{ __('Confirm that investor capital has been checked against the approved amount?') }}" class="inline-flex items-center gap-2 rounded-xl bg-navy-900 px-3.5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-navy-900/20 transition hover:bg-navy-800 {{ $loan->application_status !== \App\Enums\ApplicationStatus::Accepted ? 'cursor-not-allowed opacity-50' : '' }}">
