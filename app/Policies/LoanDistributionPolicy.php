@@ -28,4 +28,9 @@ class LoanDistributionPolicy
         return $loan->guarantorsEditable()
             && in_array($user->role, [UserRole::Admin, UserRole::SuperAdmin], true);
     }
+
+    public function manageCollateral(User $user, Loan $loan): bool
+    {
+        return in_array($user->role, [UserRole::Admin, UserRole::SuperAdmin], true);
+    }
 }

@@ -52,6 +52,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
     'created_by',
     'closed_at',
     'notes',
+    'collateral_available',
 ])]
 class Loan extends Model
 {
@@ -99,6 +100,7 @@ class Loan extends Model
             'capital_verified_at' => 'datetime',
             'final_approved_at' => 'datetime',
             'closed_at' => 'datetime',
+            'collateral_available' => 'boolean',
         ];
     }
 
@@ -123,6 +125,11 @@ class Loan extends Model
             ->withPivot(['relationship', 'custom_relationship'])
             ->withTimestamps()
             ->orderBy('guarantors.id');
+    }
+
+    public function collaterals(): HasMany
+    {
+        return $this->hasMany(Collateral::class)->orderBy('id');
     }
 
     public function allocations(): HasMany

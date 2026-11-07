@@ -4,6 +4,7 @@ use App\Enums\LoanFundingStatus;
 use App\Enums\LoanStatus;
 use App\Enums\PaymentMethod;
 use App\Enums\Permission;
+use App\Models\Collateral;
 use App\Models\Guarantor;
 use App\Models\Loan;
 use App\Models\LoanOffer;
@@ -55,10 +56,29 @@ new #[Title('Loan details')] class extends Component
     /** @var array<string, mixed> */
     public array $guarantorForm = [];
 
+    public bool $collateralAvailable = false;
+
+    public bool $showCollateralModal = false;
+
+    public ?int $editingCollateralId = null;
+
+    public string $collateral_item = '';
+
+    public string $collateral_description = '';
+
+    public string $collateral_estimated_value = '';
+
+    public string $collateral_quantity = '1';
+
+    public string $collateral_identification_details = '';
+
+    public string $collateral_remarks = '';
+
     public function mount(Loan $loan): void
     {
-        $this->loan = $loan->refresh()->load(['borrower', 'guarantors', 'allocations.investor']);
+        $this->loan = $loan->refresh()->load(['borrower', 'guarantors', 'allocations.investor', 'collaterals.verifiedBy']);
         $this->payment_date = now()->format('Y-m-d');
+        $this->collateralAvailable = (bool) $loan->collateral_available;
     }
 
     /**
@@ -99,6 +119,165 @@ new #[Title('Loan details')] class extends Component
             ->orderByDesc('al.created_at')
             ->limit(16)
             ->get(['al.id', 'al.action', 'al.new_values', 'al.created_at', 'u.name as user_name']);
+    }
+
+    /**
+     * @return \Illuminate\Database\Eloquent\Collection<int, \App\Models\Collateral>
+     */
+    #[Computed]
+    public function collaterals()
+    {
+        return $this->loan->collaterals()->with('verifiedBy')->orderBy('id')->get();
+    }
+
+    public function updatedCollateralAvailable(bool $value): void
+    {
+        $this->authorizeCollateralManagement();
+
+        $this->loan->forceFill(['collateral_available' => $value])->save();
+    }
+
+    private function authorizeCollateralManagement(): void
+    {
+        Gate::authorize('manageCollateral', $this->loan);
+    }
+
+    public function openAddCollateralModal(?int $collateralId = null): void
+    {
+        $this->authorizeCollateralManagement();
+
+        $this->editingCollateralId = $collateralId;
+
+        if ($collateralId === null) {
+            $this->reset(['collateral_item', 'collateral_description', 'collateral_estimated_value', 'collateral_identification_details', 'collateral_remarks']);
+            $this->collateral_quantity = '1';
+            $this->collateral_estimated_value = '';
+        } else {
+            /** @var Collateral $collateral */
+            $collateral = $this->loan->collaterals()->findOrFail($collateralId);
+            $this->collateral_item = $collateral->item;
+            $this->collateral_description = (string) ($collateral->description ?? '');
+            $this->collateral_estimated_value = rtrim(rtrim((string) $collateral->estimated_value, '0'), '.');
+            $this->collateral_quantity = rtrim(rtrim((string) $collateral->quantity, '0'), '.');
+            $this->collateral_identification_details = (string) ($collateral->identification_details ?? '');
+            $this->collateral_remarks = (string) ($collateral->remarks ?? '');
+        }
+
+        $this->resetValidation();
+        $this->showCollateralModal = true;
+    }
+
+    public function saveCollateral(): void
+    {
+        $this->authorizeCollateralManagement();
+
+        $validated = $this->validate([
+            'collateral_item' => ['required', 'string', 'max:255'],
+            'collateral_description' => ['nullable', 'string', 'max:2000'],
+            'collateral_estimated_value' => ['required', 'numeric', 'min:0', 'max:100000000'],
+            'collateral_quantity' => ['required', 'numeric', 'min:0.01', 'max:1000000'],
+            'collateral_identification_details' => ['nullable', 'string', 'max:255'],
+            'collateral_remarks' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        $data = [
+            'item' => trim($validated['collateral_item']),
+            'description' => $validated['collateral_description'] ?? null,
+            'estimated_value' => $validated['collateral_estimated_value'],
+            'quantity' => $validated['collateral_quantity'],
+            'identification_details' => $validated['collateral_identification_details'] ?? null,
+            'remarks' => $validated['collateral_remarks'] ?? null,
+        ];
+
+        if ($this->editingCollateralId !== null) {
+            $collateral = $this->loan->collaterals()->findOrFail($this->editingCollateralId);
+
+            if ($collateral->verification_status === \App\Enums\CollateralVerificationStatus::Verified) {
+                $this->loan = $this->loan->refresh()->load(['borrower', 'guarantors', 'allocations.investor', 'collaterals.verifiedBy']);
+                Flux::toast(variant: 'danger', text: __('Verified collateral cannot be edited. Reject it first to make corrections.'));
+                $this->showCollateralModal = false;
+
+                return;
+            }
+
+            $collateral->update($data);
+        } else {
+            $this->loan->collaterals()->create($data);
+            \App\Support\AuditLogger::log('collateral.added', $this->loan, [], [
+                'loan_id' => $this->loan->getKey(),
+                'item' => $data['item'],
+                'estimated_value' => $data['estimated_value'],
+                'quantity' => $data['quantity'],
+            ]);
+        }
+
+        $this->showCollateralModal = false;
+        $this->editingCollateralId = null;
+        unset($this->collaterals);
+        $this->loan = $this->loan->refresh()->load(['borrower', 'guarantors', 'allocations.investor', 'collaterals.verifiedBy']);
+
+        Flux::toast(variant: 'success', text: __('Collateral saved.'));
+    }
+
+    public function deleteCollateral(int $collateralId): void
+    {
+        $this->authorizeCollateralManagement();
+
+        $collateral = $this->loan->collaterals()->findOrFail($collateralId);
+
+        if ($collateral->verification_status === \App\Enums\CollateralVerificationStatus::Verified) {
+            Flux::toast(variant: 'danger', text: __('Verified collateral cannot be deleted.'));
+
+            return;
+        }
+
+        $collateral->delete();
+        unset($this->collaterals);
+        $this->loan = $this->loan->refresh()->load(['borrower', 'guarantors', 'allocations.investor', 'collaterals.verifiedBy']);
+
+        Flux::toast(variant: 'success', text: __('Collateral removed.'));
+    }
+
+    public function setCollateralVerification(int $collateralId, string $status): void
+    {
+        $this->authorizeCollateralManagement();
+
+        $collateral = $this->loan->collaterals()->findOrFail($collateralId);
+
+        $verificationStatus = match ($status) {
+            'verified' => \App\Enums\CollateralVerificationStatus::Verified,
+            'rejected' => \App\Enums\CollateralVerificationStatus::Rejected,
+            default => \App\Enums\CollateralVerificationStatus::Unverified,
+        };
+
+        $collateral->forceFill([
+            'verification_status' => $verificationStatus,
+            'verified_by' => $verificationStatus === \App\Enums\CollateralVerificationStatus::Unverified ? null : auth()->id(),
+            'verified_at' => $verificationStatus === \App\Enums\CollateralVerificationStatus::Unverified ? null : now(),
+        ])->save();
+
+        \App\Support\AuditLogger::log('collateral.verification_changed', $this->loan, [], [
+            'loan_id' => $this->loan->getKey(),
+            'collateral_id' => $collateral->getKey(),
+            'status' => $verificationStatus->value,
+        ]);
+
+        unset($this->collaterals);
+        $this->loan = $this->loan->refresh()->load(['borrower', 'guarantors', 'allocations.investor', 'collaterals.verifiedBy']);
+
+        Flux::toast(variant: 'success', text: __('Collateral verification status updated.'));
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function collateralVerificationOptions(): array
+    {
+        return [
+            'unverified' => __('Unverified'),
+            'verified' => __('Verified'),
+            'rejected' => __('Rejected'),
+        ];
     }
 
     /**
@@ -803,6 +982,86 @@ new #[Title('Loan details')] class extends Component
             </div>
 
             <div class="fc-card p-5">
+                <div class="flex items-center justify-between gap-3">
+                    <div>
+                        <h3 class="text-sm font-semibold">{{ __('Collateral') }}</h3>
+                        <p class="mt-0.5 text-[11px] text-slate-400">{{ __('Assets pledged against this loan for verification.') }}</p>
+                    </div>
+                    @if ($collateralAvailable)
+                        <button type="button" wire:click="openAddCollateralModal" class="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900">
+                            <flux:icon.plus class="size-3.5" />
+                            {{ __('Add collateral') }}
+                        </button>
+                    @endif
+                </div>
+
+                <label class="mt-4 flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 p-3 transition hover:border-slate-300">
+                    <input type="checkbox" wire:model.live="collateralAvailable" class="size-4 rounded border-slate-300 text-navy-900 focus:ring-navy-900/20" />
+                    <span class="min-w-0">
+                        <span class="block text-xs font-semibold text-slate-800">{{ __('Collateral Available') }}</span>
+                        <span class="mt-0.5 block text-[11px] text-slate-400">{{ __('Check this only when the borrower pledges an asset or item as collateral.') }}</span>
+                    </span>
+                </label>
+
+                @if ($collateralAvailable)
+                    <div class="mt-4 space-y-3">
+                        @forelse ($this->collaterals as $collateral)
+                            <article class="rounded-2xl border border-slate-200 p-3.5" wire:key="collateral-{{ $collateral->id }}">
+                                <div class="flex items-start justify-between gap-3">
+                                    <div class="min-w-0">
+                                        <p class="text-sm font-semibold text-slate-900">{{ $collateral->item }}</p>
+                                        <p class="mt-0.5 text-[11px] text-slate-400">{{ __('Value') }}: {{ \App\Support\Money::format($collateral->estimated_value) }} · {{ __('Qty') }}: {{ rtrim(rtrim((string) $collateral->quantity, '0'), '.') }}</p>
+                                    </div>
+                                    <div class="flex shrink-0 items-center gap-1.5">
+                                        <x-status-badge :status="$collateral->verification_status" class="!text-[9px]" />
+                                        @if ($collateral->verification_status !== \App\Enums\CollateralVerificationStatus::Verified)
+                                            <button type="button" wire:click="openAddCollateralModal({{ $collateral->id }})" class="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:text-slate-900">{{ __('Edit') }}</button>
+                                        @endif
+                                        @if ($collateral->verification_status !== \App\Enums\CollateralVerificationStatus::Verified)
+                                            <button type="button" wire:click="deleteCollateral({{ $collateral->id }})" wire:confirm="{{ __('Remove this collateral item?') }}" class="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-rose-600 hover:text-rose-700">{{ __('Delete') }}</button>
+                                        @endif
+                                    </div>
+                                </div>
+                                @if ($collateral->description)
+                                    <p class="mt-2 text-xs leading-relaxed text-slate-600">{{ $collateral->description }}</p>
+                                @endif
+                                <dl class="mt-2 grid gap-1.5 text-xs sm:grid-cols-2">
+                                    @if ($collateral->identification_details)
+                                        <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('ID details') }}</dt><dd class="break-all font-medium text-slate-700">{{ $collateral->identification_details }}</dd></div>
+                                    @endif
+                                    @if ($collateral->remarks)
+                                        <div class="flex justify-between gap-3 sm:col-span-2"><dt class="text-slate-400">{{ __('Remarks') }}</dt><dd class="font-medium text-slate-700">{{ $collateral->remarks }}</dd></div>
+                                    @endif
+                                </dl>
+
+                                @if (auth()->user()?->can('manageCollateral', $loan))
+                                    <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                                        <span class="text-[11px] font-semibold text-slate-500">{{ __('Verification:') }}</span>
+                                        @if ($collateral->verification_status !== \App\Enums\CollateralVerificationStatus::Verified)
+                                            <button type="button" wire:click="setCollateralVerification({{ $collateral->id }}, 'verified')" wire:confirm="{{ __('Mark this collateral as verified?') }}" class="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-emerald-700"><flux:icon.check class="size-3" />{{ __('Verify') }}</button>
+                                        @endif
+                                        @if ($collateral->verification_status !== \App\Enums\CollateralVerificationStatus::Rejected)
+                                            <button type="button" wire:click="setCollateralVerification({{ $collateral->id }}, 'rejected')" wire:confirm="{{ __('Reject this collateral?') }}" class="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-rose-600 hover:text-rose-700"><flux:icon.x-mark class="size-3" />{{ __('Reject') }}</button>
+                                        @endif
+                                        @if ($collateral->verification_status !== \App\Enums\CollateralVerificationStatus::Unverified)
+                                            <button type="button" wire:click="setCollateralVerification({{ $collateral->id }}, 'unverified')" class="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-slate-600 hover:text-slate-900">{{ __('Reset') }}</button>
+                                        @endif
+                                        @if ($collateral->verified_at)
+                                            <span class="ml-auto text-[10px] text-slate-400">{{ __('by :name · :date', ['name' => $collateral->verifiedBy?->name ?? __('System'), 'date' => $collateral->verified_at->format(\App\Support\Regional::dateFormat())]) }}</span>
+                                        @endif
+                                    </div>
+                                @endif
+                            </article>
+                        @empty
+                            <p class="rounded-xl border border-dashed border-slate-200 px-3 py-6 text-center text-xs text-slate-400">{{ __('No collateral recorded yet. Add the pledged asset to enable verification.') }}</p>
+                        @endforelse
+                    </div>
+                @else
+                    <p class="mt-4 rounded-xl border border-dashed border-slate-200 px-3 py-5 text-center text-[11px] text-slate-400">{{ __('Collateral is not offered for this loan.') }}</p>
+                @endif
+            </div>
+
+            <div class="fc-card p-5">
                 <div class="flex items-start justify-between gap-3">
                     <div>
                         <h3 class="text-sm font-semibold">{{ __('Investor funding') }}</h3>
@@ -905,6 +1164,50 @@ new #[Title('Loan details')] class extends Component
                     <div class="mt-4 flex items-center justify-end gap-2">
                         <button type="button" wire:click="$set('showGuarantorModal', false)" class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">{{ __('Cancel') }}</button>
                         <flux:button type="submit" variant="primary" class="!rounded-xl">{{ $guarantorFormMode === 'relationship' ? __('Save relationship') : __('Save Guarantor') }}</flux:button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    @endif
+
+    @if ($showCollateralModal)
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" wire:click="$set('showCollateralModal', false)"></div>
+
+            <div class="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
+                <div class="flex items-start justify-between">
+                    <div>
+                        <h3 class="text-base font-semibold">{{ $editingCollateralId !== null ? __('Edit collateral') : __('Add collateral') }}</h3>
+                        <p class="mt-0.5 text-xs text-slate-400">{{ $loan->loan_code }} · {{ $loan->borrower->full_name }}</p>
+                    </div>
+                    <button type="button" wire:click="$set('showCollateralModal', false)" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"><flux:icon.x-mark class="size-4" /></button>
+                </div>
+
+                <form wire:submit="saveCollateral" class="mt-4 space-y-3">
+                    <flux:input wire:model="collateral_item" :label="__('Collateral item / asset name')" maxlength="255" placeholder="e.g. Two-wheeler, laptop, gold chain, land deed" required />
+                    @error('collateral_item') <p class="text-xs text-rose-600">{{ $message }}</p> @enderror
+
+                    <flux:textarea wire:model="collateral_description" :label="__('Collateral description')" rows="2" maxlength="2000" placeholder="Description of the asset…" />
+                    @error('collateral_description') <p class="text-xs text-rose-600">{{ $message }}</p> @enderror
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <flux:input wire:model="collateral_estimated_value" :label="__('Estimated value (₹)')" type="number" step="0.01" min="0" required />
+                        <flux:input wire:model="collateral_quantity" :label="__('Quantity')" type="number" step="0.01" min="0.01" required />
+                    </div>
+                    @error('collateral_estimated_value') <p class="text-xs text-rose-600">{{ $message }}</p> @enderror
+                    @error('collateral_quantity') <p class="text-xs text-rose-600">{{ $message }}</p> @enderror
+
+                    <flux:input wire:model="collateral_identification_details" :label="__('Identification details')" maxlength="255" placeholder="Chassis number, serial no, registration no, document no…" />
+                    @error('collateral_identification_details') <p class="text-xs text-rose-600">{{ $message }}</p> @enderror
+
+                    <flux:textarea wire:model="collateral_remarks" :label="__('Remarks')" rows="2" maxlength="2000" />
+                    @error('collateral_remarks') <p class="text-xs text-rose-600">{{ $message }}</p> @enderror
+
+                    <p class="text-[11px] text-slate-400">{{ __('Collateral is saved as unverified until an authorised user marks it verified.') }}</p>
+
+                    <div class="flex items-center justify-end gap-2 pt-1">
+                        <button type="button" wire:click="$set('showCollateralModal', false)" class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">{{ __('Cancel') }}</button>
+                        <flux:button type="submit" variant="primary" class="!rounded-xl">{{ $editingCollateralId !== null ? __('Save changes') : __('Save collateral') }}</flux:button>
                     </div>
                 </form>
             </div>
