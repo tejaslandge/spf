@@ -53,6 +53,18 @@ new #[Title('Daily Operations')] class extends Component
 
     public bool $showBulkModal = false;
 
+    public bool $showCommunicateModal = false;
+
+    public string $commChannel = 'whatsapp';
+
+    public string $commSearch = '';
+
+    public ?int $commBorrowerId = null;
+
+    public string $commMessage = '';
+
+    public string $commSubject = '';
+
     public ?int $reminderTaskId = null;
 
     public string $channel = 'whatsapp';
@@ -546,6 +558,134 @@ new #[Title('Daily Operations')] class extends Component
     }
 
     /**
+     * @return \Illuminate\Support\Collection<int, Borrower>
+     */
+    #[Computed]
+    public function commBorrowers()
+    {
+        $query = Borrower::query()->active()->orderBy('full_name');
+
+        $term = trim($this->commSearch);
+
+        if ($term !== '') {
+            $query->search($term);
+        }
+
+        return $query->limit(15)->get();
+    }
+
+    #[Computed]
+    public function commBorrower(): ?Borrower
+    {
+        if ($this->commBorrowerId === null) {
+            return null;
+        }
+
+        return Borrower::query()->find($this->commBorrowerId);
+    }
+
+    /**
+     * @return array{url: string, label: string}|null
+     */
+    #[Computed]
+    public function commLink(): ?array
+    {
+        $borrower = $this->commBorrower;
+
+        if ($borrower === null || trim($this->commMessage) === '') {
+            return null;
+        }
+
+        $body = $this->commMessage;
+
+        return match ($this->commChannel) {
+            MessageChannel::Whatsapp->value => filled($borrower->mobile) ? [
+                'url' => 'https://wa.me/'.$this->phoneForLink($borrower->mobile).'?text='.rawurlencode($body),
+                'label' => __('Open WhatsApp'),
+            ] : null,
+            MessageChannel::Sms->value => filled($borrower->mobile) ? [
+                'url' => 'sms:'.$this->phoneForLink($borrower->mobile).'?body='.rawurlencode($body),
+                'label' => __('Open SMS app'),
+            ] : null,
+            MessageChannel::Email->value => filled($borrower->email) ? [
+                'url' => 'mailto:'.$borrower->email.'?subject='.rawurlencode($this->commSubject !== '' ? $this->commSubject : __('Regarding your loan')).'&body='.rawurlencode($body),
+                'label' => __('Open Email app'),
+            ] : null,
+            default => null,
+        };
+    }
+
+    /**
+     * @return array<string, array{label: string, subject: string, body: string}>
+     */
+    #[Computed]
+    public function commTemplates(): array
+    {
+        $app = config('app.name');
+
+        return [
+            'emi_reminder' => [
+                'label' => __('EMI reminder'),
+                'subject' => __('EMI reminder'),
+                'body' => "Dear {name}, this is a reminder that your EMI is due soon. Please arrange payment on time. If already paid, please ignore. — {app}",
+            ],
+            'overdue' => [
+                'label' => __('Pending dues'),
+                'subject' => __('Overdue EMI reminder'),
+                'body' => "Dear {name}, our records show overdue EMIs on your loan account. Please clear the outstanding at the earliest to avoid penalty. — {app}",
+            ],
+            'payment_confirmation' => [
+                'label' => __('Payment confirmation'),
+                'subject' => __('Payment received'),
+                'body' => "Dear {name}, we have received your payment. Thank you for your prompt clearance. — {app}",
+            ],
+            'general' => [
+                'label' => __('General update'),
+                'subject' => __('Loan update'),
+                'body' => "Dear {name}, this is an update regarding your loan account. — {app}",
+            ],
+        ];
+    }
+
+    public function openCommunicate(string $channel = 'whatsapp'): void
+    {
+        $this->commChannel = in_array($channel, ['whatsapp', 'sms', 'email'], true) ? $channel : 'whatsapp';
+        $this->showCommunicateModal = true;
+    }
+
+    public function selectCommBorrower(int $borrowerId): void
+    {
+        $this->commBorrowerId = $borrowerId;
+
+        if (trim($this->commMessage) === '') {
+            $borrower = Borrower::query()->find($borrowerId);
+
+            if ($borrower !== null) {
+                $this->commMessage = str_replace(
+                    ['{name}', '{app}'],
+                    [$borrower->full_name, config('app.name')],
+                    __('Dear {name}, this is a reminder regarding your loan account. — {app}'),
+                );
+            }
+        }
+    }
+
+    public function applyCommTemplate(string $key): void
+    {
+        $templates = $this->commTemplates;
+
+        if (! isset($templates[$key])) {
+            return;
+        }
+
+        $name = $this->commBorrower?->full_name ?? __('borrower');
+        $app = config('app.name');
+
+        $this->commMessage = str_replace(['{name}', '{app}'], [$name, $app], $templates[$key]['body']);
+        $this->commSubject = $templates[$key]['subject'];
+    }
+
+    /**
      * Manually mark one bulk reminder as sent. Nothing is sent from the server.
      */
     public function bulkMarkSent(int $taskId): void
@@ -614,6 +754,22 @@ new #[Title('Daily Operations')] class extends Component
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
+            <div class="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm" role="group" aria-label="{{ __('Communicate with a borrower') }}">
+                <span class="hidden px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400 sm:inline">{{ __('Reach out') }}</span>
+                <button type="button" wire:click="openCommunicate('whatsapp')" class="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-50" title="{{ __('Message a borrower on WhatsApp') }}" aria-label="{{ __('WhatsApp a borrower') }}">
+                    <flux:icon.chat-bubble-left-right class="size-4" />
+                    <span class="hidden sm:inline">{{ __('WhatsApp') }}</span>
+                </button>
+                <button type="button" wire:click="openCommunicate('sms')" class="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-[11px] font-semibold text-blue-700 transition hover:bg-blue-50" title="{{ __('Message a borrower by SMS') }}" aria-label="{{ __('SMS a borrower') }}">
+                    <flux:icon.device-phone-mobile class="size-4" />
+                    <span class="hidden sm:inline">{{ __('SMS') }}</span>
+                </button>
+                <button type="button" wire:click="openCommunicate('email')" class="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-[11px] font-semibold text-violet-700 transition hover:bg-violet-50" title="{{ __('Email a borrower') }}" aria-label="{{ __('Email a borrower') }}">
+                    <flux:icon.envelope class="size-4" />
+                    <span class="hidden sm:inline">{{ __('Email') }}</span>
+                </button>
+            </div>
+
             <div class="flex items-center rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
                 <button type="button" wire:click="previousDay" class="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700" aria-label="{{ __('Previous day') }}">
                     <flux:icon.chevron-left class="size-4" />
@@ -880,7 +1036,9 @@ new #[Title('Daily Operations')] class extends Component
                 <div class="mt-4 space-y-3">
                     <div class="grid grid-cols-3 gap-2">
                         @foreach (['whatsapp' => 'WhatsApp', 'sms' => 'SMS', 'email' => 'Email'] as $value => $label)
-                            @php($disabled = $value === 'email' && blank($this->reminderContact['email'] ?? null))
+                            @php
+                                $disabled = $value === 'email' && blank($this->reminderContact['email'] ?? null);
+                            @endphp
                             <label class="flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border p-2.5 text-center transition {{ $channel === $value ? 'border-blue-500 bg-blue-50/50 ring-2 ring-blue-500/20' : 'border-slate-200 hover:border-slate-300' }} {{ $disabled ? 'cursor-not-allowed opacity-40' : '' }}">
                                 <input type="radio" wire:model.live="channel" value="{{ $value }}" @disabled($disabled) class="sr-only">
                                 <span class="flex size-8 items-center justify-center rounded-lg {{ $channel === $value ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500' }}">
@@ -922,6 +1080,117 @@ new #[Title('Daily Operations')] class extends Component
                             <flux:icon.check class="size-4" />
                             {{ __('Mark as sent') }}
                         </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    @endif
+
+    @if ($showCommunicateModal)
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4" x-data="{ copied: false }">
+            <div class="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" wire:click="$set('showCommunicateModal', false)"></div>
+
+            <div class="relative flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+                <div class="flex items-start justify-between gap-3 border-b border-slate-100 p-5">
+                    <div>
+                        <h3 class="text-base font-semibold">{{ __('Communicate with a borrower') }}</h3>
+                        <p class="mt-0.5 text-xs text-slate-400">{{ __('Pick a borrower, edit the message, then open your app. Nothing is sent until you send it yourself.') }}</p>
+                    </div>
+                    <button type="button" wire:click="$set('showCommunicateModal', false)" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"><flux:icon.x-mark class="size-4" /></button>
+                </div>
+
+                <div class="grid overflow-y-auto lg:grid-cols-[280px_1fr]">
+                    <div class="border-b border-slate-100 p-4 lg:border-b-0 lg:border-r">
+                        <label class="relative block">
+                            <flux:icon.magnifying-glass class="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                            <input type="search" wire:model.live.debounce.300ms="commSearch" placeholder="{{ __('Search borrower…') }}" class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pe-3 ps-9 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20" aria-label="{{ __('Search borrowers') }}">
+                        </label>
+
+                        <ul class="mt-3 max-h-[52vh] space-y-1.5 overflow-y-auto">
+                            @forelse ($this->commBorrowers as $borrower)
+                                <li wire:key="comm-borrower-{{ $borrower->id }}">
+                                    <button type="button" wire:click="selectCommBorrower({{ $borrower->id }})" class="flex w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 text-start transition {{ $commBorrowerId === $borrower->id ? 'border-navy-900 bg-navy-900/5 ring-1 ring-navy-900/10' : 'border-slate-200 bg-white hover:border-slate-300' }}">
+                                        <flux:avatar :name="$borrower->full_name" :initials="str($borrower->full_name)->substr(0, 1)" size="xs" />
+                                        <span class="min-w-0 flex-1">
+                                            <span class="block truncate text-xs font-semibold text-slate-800">{{ $borrower->full_name }}</span>
+                                            <span class="mt-0.5 block truncate text-[10px] tabular-nums text-slate-400">{{ $borrower->mobile }}@if ($borrower->email) · {{ $borrower->email }} @endif</span>
+                                        </span>
+                                        @if ($commBorrowerId === $borrower->id)
+                                            <flux:icon.check class="size-4 shrink-0 text-navy-900" />
+                                        @endif
+                                    </button>
+                                </li>
+                            @empty
+                                <li class="rounded-xl border border-dashed border-slate-200 px-3 py-6 text-center text-[11px] text-slate-400">{{ __('No borrowers match your search.') }}</li>
+                            @endforelse
+                        </ul>
+                    </div>
+
+                    <div class="p-4 sm:p-5">
+                        @if ($this->commBorrower)
+                            @php $commBorrower = $this->commBorrower; @endphp
+                            <div class="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                                <p class="text-xs font-semibold text-slate-800">{{ $commBorrower->full_name }} · {{ $commBorrower->borrower_code }}</p>
+                                <dl class="mt-1.5 space-y-1 text-[11px] text-slate-500">
+                                    <div class="flex justify-between gap-3"><dt>{{ __('Mobile') }}</dt><dd class="font-medium tabular-nums text-slate-700">{{ $commBorrower->mobile }}</dd></div>
+                                    <div class="flex justify-between gap-3"><dt>{{ __('Email') }}</dt><dd class="break-all font-medium text-slate-700">{{ $commBorrower->email ?: __('Not on file') }}</dd></div>
+                                </dl>
+                            </div>
+
+                            <div class="mt-3 grid grid-cols-3 gap-2">
+                                @foreach (['whatsapp' => 'WhatsApp', 'sms' => 'SMS', 'email' => 'Email'] as $value => $label)
+                                    @php
+                                        $disabled = $value === 'email' && blank($commBorrower->email);
+                                    @endphp
+                                    <label class="flex cursor-pointer flex-col items-center gap-1 rounded-xl border p-2.5 text-center transition {{ $commChannel === $value ? 'border-blue-500 bg-blue-50/50 ring-2 ring-blue-500/20' : 'border-slate-200 hover:border-slate-300' }} {{ $disabled ? 'cursor-not-allowed opacity-40' : '' }}">
+                                        <input type="radio" wire:model.live="commChannel" value="{{ $value }}" @disabled($disabled) class="sr-only">
+                                        <span class="flex size-8 items-center justify-center rounded-lg {{ $commChannel === $value ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500' }}">
+                                            <flux:icon.chat-bubble-left-right class="size-4" />
+                                        </span>
+                                        <span class="text-[11px] font-semibold text-slate-700">{{ $label }}</span>
+                                    </label>
+                                @endforeach
+                            </div>
+
+                            <div class="mt-3 flex flex-wrap gap-1.5">
+                                @foreach ($this->commTemplates as $key => $template)
+                                    <button type="button" wire:click="applyCommTemplate('{{ $key }}')" class="rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900">{{ $template['label'] }}</button>
+                                @endforeach
+                            </div>
+
+                            @if ($commChannel === 'email')
+                                <div class="mt-3">
+                                    <flux:input wire:model="commSubject" :label="__('Subject')" maxlength="255" />
+                                </div>
+                            @endif
+
+                            <flux:textarea wire:model="commMessage" :label="__('Message')" rows="5" maxlength="1000" class="mt-3" x-ref="commField" />
+
+                            <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
+                                <button type="button" x-on:click="navigator.clipboard.writeText($refs.commField.value); copied = true; setTimeout(() => copied = false, 1500)" class="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900">
+                                    <flux:icon.clipboard-document class="size-4" />
+                                    <span x-text="copied ? @js(__('Copied!')) : @js(__('Copy message'))"></span>
+                                </button>
+
+                                <div class="flex items-center gap-2">
+                                    <button type="button" wire:click="$set('showCommunicateModal', false)" class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">{{ __('Close') }}</button>
+                                    @if ($this->commLink)
+                                        <a href="{{ $this->commLink['url'] }}" target="_blank" rel="noopener" class="inline-flex items-center gap-1.5 rounded-xl bg-navy-900 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-navy-800">
+                                            {{ $this->commLink['label'] }}
+                                            <flux:icon.arrow-top-right-on-square class="size-4" />
+                                        </a>
+                                    @endif
+                                </div>
+                            </div>
+
+                            <p class="mt-3 text-[10px] leading-relaxed text-slate-400">{{ __('Manual communication only — messages open in your own SMS/WhatsApp/Email app and are never sent automatically.') }}</p>
+                        @else
+                            <div class="flex h-full min-h-[240px] flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 p-6 text-center">
+                                <span class="flex size-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400"><flux:icon.user class="size-6" /></span>
+                                <p class="mt-3 text-sm font-semibold text-slate-600">{{ __('Choose a borrower') }}</p>
+                                <p class="mt-1 max-w-xs text-[11px] text-slate-400">{{ __('Search or pick a borrower on the left to view their contact details and compose a message.') }}</p>
+                            </div>
+                        @endif
                     </div>
                 </div>
             </div>
