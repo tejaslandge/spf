@@ -34,6 +34,7 @@ class SendMessage implements ShouldQueue
                     $this->messageLog->recipient,
                     (string) ($this->messageLog->payload['body'] ?? ''),
                 ),
+                MessageChannel::Email => throw new \LogicException('Email delivery is manual in v1 — open the recipient in your mail client and send from there.'),
             };
 
             $this->messageLog->update([

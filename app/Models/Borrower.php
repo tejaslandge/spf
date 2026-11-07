@@ -24,6 +24,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
     'occupation',
     'mobile',
     'alternate_mobile',
+    'email',
     'emergency_contact_name',
     'emergency_contact_number',
     'bank_name',

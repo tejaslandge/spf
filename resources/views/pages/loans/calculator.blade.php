@@ -36,6 +36,10 @@ new #[Title('Loan calculator')] class extends Component
 
     public string $reject_reason = '';
 
+    public bool $showAcceptModal = false;
+
+    public ?int $acceptingOfferId = null;
+
     public function mount(Loan $loan): void
     {
         $this->loan = $loan->refresh()->load(['offers.acceptedBy', 'schedules', 'payments', 'borrower']);
@@ -79,6 +83,18 @@ new #[Title('Loan calculator')] class extends Component
         return $this->offers->first(fn (LoanOffer $offer) => $offer->accepted_at !== null);
     }
 
+    #[Computed]
+    public function acceptingOffer(): ?LoanOffer
+    {
+        if ($this->acceptingOfferId === null) {
+            return null;
+        }
+
+        return LoanOffer::query()
+            ->where('loan_id', $this->loan->getKey())
+            ->find($this->acceptingOfferId);
+    }
+
     public function generateOffer(): void
     {
         try {
@@ -108,8 +124,29 @@ new #[Title('Loan calculator')] class extends Component
         $this->redirectRoute('loans.calculator', $this->loan, navigate: true);
     }
 
+    public function openAcceptModal(int $offerId): void
+    {
+        $offer = $this->loan->offers()->findOrFail($offerId);
+
+        if ($offer->accepted_at !== null || $this->loan->status !== \App\Enums\LoanStatus::Pending || $this->loan->application_status === \App\Enums\ApplicationStatus::Accepted) {
+            return;
+        }
+
+        $this->acceptingOfferId = $offerId;
+        $this->showAcceptModal = true;
+    }
+
+    public function cancelAcceptModal(): void
+    {
+        $this->showAcceptModal = false;
+        $this->acceptingOfferId = null;
+    }
+
     public function confirmAcceptance(int $offerId): void
     {
+        $this->showAcceptModal = false;
+        $this->acceptingOfferId = null;
+
         $offer = $this->loan->offers()->findOrFail($offerId);
 
         try {
@@ -302,7 +339,8 @@ new #[Title('Loan calculator')] class extends Component
                                             </p>
                                         </div>
                                         @if (! $offer->accepted_at && $loan->status === \App\Enums\LoanStatus::Pending && $loan->application_status !== \App\Enums\ApplicationStatus::Accepted)
-                                            <button type="button" wire:click="confirmAcceptance({{ $offer->id }})" wire:confirm="{{ __('Record the acceptance of this offer as signed by the borrower? The offered terms will be locked into the loan.') }}" class="rounded-xl bg-navy-900 px-3.5 py-2.5 text-xs font-semibold text-white transition hover:bg-navy-800">
+                                            <button type="button" wire:click="openAcceptModal({{ $offer->id }})" class="inline-flex items-center gap-1.5 rounded-xl bg-navy-900 px-3.5 py-2.5 text-xs font-semibold text-white transition hover:bg-navy-800">
+                                                <flux:icon.lock-closed class="size-4" />
                                                 {{ __('Record acceptance') }}
                                             </button>
                                         @endif
@@ -315,6 +353,61 @@ new #[Title('Loan calculator')] class extends Component
             </div>
         </div>
     </div>
+
+    @if ($showAcceptModal && $this->acceptingOffer)
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" wire:click="cancelAcceptModal"></div>
+
+            <div class="relative w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+                <div class="flex items-start gap-3">
+                    <span class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-amber-50 ring-1 ring-amber-100">
+                        <flux:icon.lock-closed class="size-5 text-amber-600" />
+                    </span>
+                    <div class="min-w-0">
+                        <h3 class="text-base font-semibold">{{ __('Confirm offer acceptance') }}</h3>
+                        <p class="mt-1 text-xs leading-relaxed text-slate-500">{{ __('Record the acceptance of this offer as signed by the borrower? The offered terms will be locked into the loan.') }}</p>
+                    </div>
+                    <button type="button" wire:click="cancelAcceptModal" class="ms-auto shrink-0 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100">
+                        <flux:icon.x-mark class="size-4" />
+                    </button>
+                </div>
+
+                <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                    <dl class="space-y-1.5 text-xs">
+                        <div class="flex justify-between gap-3">
+                            <dt class="text-slate-400">{{ __('Principal') }}</dt>
+                            <dd class="font-semibold tabular-nums text-slate-700">{{ Money::format($this->acceptingOffer->principal_amount) }}</dd>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                            <dt class="text-slate-400">{{ __('Method') }}</dt>
+                            <dd class="font-medium text-slate-700">{{ ucfirst($this->acceptingOffer->interest_method->value) }} · {{ rtrim(rtrim((string) $this->acceptingOffer->annual_interest_rate, '0'), '.') }}% · {{ $this->acceptingOffer->tenure_months }} {{ __('months') }}</dd>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                            <dt class="text-slate-400">{{ __('EMI') }}</dt>
+                            <dd class="font-semibold tabular-nums text-slate-700">{{ Money::format($this->acceptingOffer->emi_amount) }}</dd>
+                        </div>
+                        <div class="flex justify-between gap-3 border-t border-slate-200 pt-1.5">
+                            <dt class="text-slate-400">{{ __('Total repayment') }}</dt>
+                            <dd class="font-semibold tabular-nums text-slate-700">{{ Money::format($this->acceptingOffer->total_repayment) }}</dd>
+                        </div>
+                    </dl>
+                </div>
+
+                <p class="mt-3 flex items-start gap-2 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-800">
+                    <flux:icon.exclamation-triangle class="mt-0.5 size-4 shrink-0" />
+                    {{ __('This cannot be undone. The offered interest method, rate, tenure, EMI and fees will be frozen and copied onto the loan.') }}
+                </p>
+
+                <div class="mt-4 flex items-center justify-end gap-2">
+                    <button type="button" wire:click="cancelAcceptModal" class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900">{{ __('Cancel') }}</button>
+                    <button type="button" wire:click="confirmAcceptance({{ $this->acceptingOfferId }})" class="inline-flex items-center gap-2 whitespace-nowrap rounded-xl bg-navy-900 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-navy-800">
+                        <flux:icon.lock-closed class="size-4" />
+                        {{ __('Confirm — lock the terms') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+    @endif
 
     @if ($showRejectModal)
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">

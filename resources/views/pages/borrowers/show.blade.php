@@ -138,6 +138,7 @@ new #[Title('Borrower profile')] class extends Component
                 <dl class="mt-4 space-y-3 text-sm">
                     <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Mobile') }}</dt><dd class="font-medium text-slate-800">{{ $borrower->mobile }}</dd></div>
                     <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Alternate') }}</dt><dd class="font-medium text-slate-800">{{ $borrower->alternate_mobile ?: '—' }}</dd></div>
+                    <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Email') }}</dt><dd class="break-all font-medium text-slate-800">{{ $borrower->email ?: '—' }}</dd></div>
                     <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Emergency') }}</dt><dd class="text-end font-medium text-slate-800">{{ $borrower->emergency_contact_name }}<br><span class="text-xs font-normal text-slate-500">{{ $borrower->emergency_contact_number }}</span></dd></div>
                 </dl>
                 <div class="mt-4 border-t border-slate-100 pt-4">

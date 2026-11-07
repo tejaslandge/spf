@@ -35,6 +35,8 @@ new #[Title('Borrower')] class extends Component
 
     public string $alternate_mobile = '';
 
+    public string $email = '';
+
     public string $emergency_contact_name = '';
 
     public string $emergency_contact_number = '';
@@ -76,6 +78,7 @@ new #[Title('Borrower')] class extends Component
                 'occupation' => (string) $borrower->occupation,
                 'mobile' => $borrower->mobile,
                 'alternate_mobile' => (string) $borrower->alternate_mobile,
+                'email' => (string) ($borrower->email ?? ''),
                 'emergency_contact_name' => $borrower->emergency_contact_name,
                 'emergency_contact_number' => $borrower->emergency_contact_number,
                 'bank_name' => (string) $borrower->bank_name,
@@ -132,6 +135,7 @@ new #[Title('Borrower')] class extends Component
             'occupation' => ['nullable', 'string', 'max:100'],
             'mobile' => ['required', 'digits:10', Rule::unique('borrowers', 'mobile')->ignore($this->borrower?->id)],
             'alternate_mobile' => ['nullable', 'digits:10', 'different:mobile'],
+            'email' => ['nullable', 'email', 'max:255', Rule::unique('borrowers', 'email')->ignore($this->borrower?->id)],
             'emergency_contact_name' => ['required', 'string', 'min:2', 'max:255'],
             'emergency_contact_number' => ['required', 'digits:10'],
             'bank_name' => ['nullable', 'string', 'max:255'],
@@ -160,11 +164,12 @@ new #[Title('Borrower')] class extends Component
         $this->emergency_contact_name = trim($this->emergency_contact_name);
         $this->mobile = preg_replace('/\D/', '', $this->mobile) ?? '';
         $this->alternate_mobile = preg_replace('/\D/', '', $this->alternate_mobile) ?? '';
+        $this->email = strtolower(trim($this->email));
         $this->emergency_contact_number = preg_replace('/\D/', '', $this->emergency_contact_number) ?? '';
 
         $validated = $this->validate();
 
-        foreach (['state', 'pincode', 'occupation'] as $field) {
+        foreach (['state', 'pincode', 'occupation', 'email'] as $field) {
             if (($validated[$field] ?? null) === '') {
                 $validated[$field] = null;
             }
@@ -263,6 +268,7 @@ new #[Title('Borrower')] class extends Component
                 <flux:input wire:model="full_name" :label="__('Full name')" placeholder="As per Aadhaar" required minlength="2" maxlength="255" />
                 <flux:input wire:model="mobile" :label="__('Mobile number')" placeholder="10-digit mobile" inputmode="numeric" maxlength="10" required />
                 <flux:input wire:model="alternate_mobile" :label="__('Alternate mobile')" placeholder="Optional" inputmode="numeric" maxlength="10" />
+                <flux:input wire:model="email" type="email" :label="__('Email (optional)')" placeholder="borrower@example.com" maxlength="255" />
                 <flux:select wire:model="status" :label="__('Status')" required>
                     @foreach (\App\Enums\BorrowerStatus::options() as $value => $label)
                         <option value="{{ $value }}">{{ $label }}</option>

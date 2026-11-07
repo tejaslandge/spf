@@ -13,7 +13,6 @@ use App\Models\KycDocument;
 use App\Models\Loan;
 use App\Models\User;
 use App\Services\DailyTaskGenerator;
-use App\Services\Notifications\MessageDispatcher;
 use App\Support\Money;
 use Flux\Flux;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
@@ -59,6 +58,8 @@ new #[Title('Daily Operations')] class extends Component
     public string $channel = 'whatsapp';
 
     public string $message = '';
+
+    public string $reminderSubject = '';
 
     public function mount(): void
     {
@@ -313,7 +314,7 @@ new #[Title('Daily Operations')] class extends Component
     }
 
     /**
-     * @return array{mobile: ?string, name: string, body: string}|null
+     * @return array{mobile: ?string, email: ?string, name: string, body: string, subject: string}|null
      */
     private function reminderContext(DailyTask $task): ?array
     {
@@ -325,7 +326,9 @@ new #[Title('Daily Operations')] class extends Component
 
             return [
                 'mobile' => $borrower?->mobile,
+                'email' => $borrower?->email,
                 'name' => $borrower?->full_name ?? __('borrower'),
+                'subject' => sprintf('EMI reminder — %s', $loan?->loan_code ?? ''),
                 'body' => sprintf(
                     'Dear %s, this is a reminder that your EMI of %s for loan %s (installment #%d) is due on %s. Please arrange payment. If already paid, please ignore. — %s',
                     $borrower?->full_name ?? 'borrower',
@@ -345,7 +348,9 @@ new #[Title('Daily Operations')] class extends Component
 
             return [
                 'mobile' => $borrower?->mobile,
+                'email' => $borrower?->email,
                 'name' => $borrower?->full_name ?? __('borrower'),
+                'subject' => sprintf('Overdue EMI reminder — %s', $related->loan_code),
                 'body' => sprintf(
                     'Dear %s, our records show your EMI(s) for loan %s are overdue totalling %s. Please clear the outstanding at the earliest to avoid penalty. — %s',
                     $borrower?->full_name ?? 'borrower',
@@ -357,6 +362,85 @@ new #[Title('Daily Operations')] class extends Component
         }
 
         return null;
+    }
+
+    /**
+     * Normalise an Indian mobile number for wa.me/sms links (10-digit → country code prefix).
+     */
+    private function phoneForLink(string $mobile): string
+    {
+        $digits = preg_replace('/\D+/', '', $mobile) ?? '';
+
+        if (strlen($digits) === 10) {
+            return '91'.$digits;
+        }
+
+        return $digits;
+    }
+
+    /**
+     * Build the manual link for the currently selected channel. Nothing is sent from the server.
+     *
+     * @return array{url: string, label: string, recipient: string}|null
+     */
+    #[Computed]
+    public function reminderLink(): ?array
+    {
+        if ($this->reminderTaskId === null) {
+            return null;
+        }
+
+        $task = DailyTask::query()->with('related')->find($this->reminderTaskId);
+        $context = $task ? $this->reminderContext($task) : null;
+
+        if ($context === null) {
+            return null;
+        }
+
+        $body = $this->message;
+
+        return match ($this->channel) {
+            MessageChannel::Whatsapp->value => filled($context['mobile'] ?? null) ? [
+                'url' => 'https://wa.me/'.$this->phoneForLink((string) $context['mobile']).'?text='.rawurlencode($body),
+                'label' => __('Open WhatsApp'),
+                'recipient' => (string) $context['mobile'],
+            ] : null,
+            MessageChannel::Sms->value => filled($context['mobile'] ?? null) ? [
+                'url' => 'sms:'.$this->phoneForLink((string) $context['mobile']).'?body='.rawurlencode($body),
+                'label' => __('Open SMS app'),
+                'recipient' => (string) $context['mobile'],
+            ] : null,
+            MessageChannel::Email->value => filled($context['email'] ?? null) ? [
+                'url' => 'mailto:'.$context['email'].'?subject='.rawurlencode($this->reminderSubject).'&body='.rawurlencode($body),
+                'label' => __('Open Email app'),
+                'recipient' => (string) $context['email'],
+            ] : null,
+            default => null,
+        };
+    }
+
+    /**
+     * @return array{name: string, mobile: ?string, email: ?string}|null
+     */
+    #[Computed]
+    public function reminderContact(): ?array
+    {
+        if ($this->reminderTaskId === null) {
+            return null;
+        }
+
+        $task = DailyTask::query()->with('related')->find($this->reminderTaskId);
+        $context = $task ? $this->reminderContext($task) : null;
+
+        if ($context === null) {
+            return null;
+        }
+
+        return [
+            'name' => $context['name'],
+            'mobile' => $context['mobile'],
+            'email' => $context['email'],
+        ];
     }
 
     public function openReminder(int $taskId): void
@@ -379,52 +463,50 @@ new #[Title('Daily Operations')] class extends Component
         $this->reminderTaskId = $task->getKey();
         $this->channel = 'whatsapp';
         $this->message = $context['body'];
+        $this->reminderSubject = $context['subject'];
         $this->showReminderModal = true;
     }
 
-    public function sendReminder(): void
+    /**
+     * Manually mark the reminder as sent and complete the task. Nothing is sent from the server.
+     */
+    public function markReminderSent(): void
     {
-        $this->validate([
-            'channel' => ['required', Rule::in([MessageChannel::Whatsapp->value, MessageChannel::Sms->value])],
-            'message' => ['required', 'string', 'max:1000'],
-        ]);
+        $task = DailyTask::query()->with('related')->find($this->reminderTaskId);
 
-        $task = DailyTask::query()->with('related')->findOrFail($this->reminderTaskId);
-        $context = $this->reminderContext($task);
-
-        if (! $context || blank($context['mobile'])) {
-            Flux::toast(variant: 'danger', text: __('No mobile number on file for this borrower.'));
+        if ($task === null) {
+            $this->showReminderModal = false;
 
             return;
         }
 
-        app(MessageDispatcher::class)->send(
-            MessageChannel::from($this->channel),
-            (string) $context['mobile'],
-            $this->message,
-            'emi_reminder',
-            related: $task->related,
-            userId: auth()->id(),
-        );
+        $context = $this->reminderContext($task);
 
         $this->completeTask($task);
+
         $this->showReminderModal = false;
         $this->reminderTaskId = null;
 
-        Flux::toast(variant: 'success', text: __('Reminder queued to :name via :channel.', ['name' => $context['name'], 'channel' => strtoupper($this->channel)]));
+        Flux::toast(variant: 'success', text: __('Marked reminder for :name as sent. Task marked done.', ['name' => $context['name'] ?? __('borrower')]));
 
         unset($this->tasks, $this->counts);
     }
 
     public function openBulkModal(): void
     {
+        unset($this->pendingReminders);
         $this->showBulkModal = true;
     }
 
-    public function sendAllReminders(): void
+    /**
+     * Pending EMI reminders for the selected day with their prebuilt manual links.
+     *
+     * @return array<int, array{id: int, name: string, mobile: ?string, email: ?string, whatsapp: string, sms: string, mailto: ?string}>
+     */
+    #[Computed]
+    public function pendingReminders(): array
     {
-        $sent = 0;
-        $skipped = 0;
+        $items = [];
 
         DailyTask::query()
             ->forDate($this->taskDate()->toDateString())
@@ -432,38 +514,52 @@ new #[Title('Daily Operations')] class extends Component
             ->ofType(DailyTaskType::EmiReminder)
             ->with(['related' => fn (MorphTo $morphTo) => $morphTo->morphWith([
                 EmiSchedule::class => ['loan.borrower'],
+                Loan::class => ['borrower'],
             ])])
+            ->orderBy('id')
             ->get()
-            ->each(function (DailyTask $task) use (&$sent, &$skipped): void {
+            ->each(function (DailyTask $task) use (&$items): void {
                 $context = $this->reminderContext($task);
 
-                if (! $context || blank($context['mobile'])) {
-                    $skipped++;
-
+                if ($context === null) {
                     return;
                 }
 
-                app(MessageDispatcher::class)->send(
-                    MessageChannel::Whatsapp,
-                    (string) $context['mobile'],
-                    $context['body'],
-                    'emi_reminder',
-                    related: $task->related,
-                    userId: auth()->id(),
-                );
-
-                $this->completeTask($task);
-                $sent++;
+                $items[] = [
+                    'id' => $task->getKey(),
+                    'name' => $context['name'],
+                    'mobile' => $context['mobile'],
+                    'email' => $context['email'],
+                    'whatsapp' => filled($context['mobile'] ?? null)
+                        ? 'https://wa.me/'.$this->phoneForLink((string) $context['mobile']).'?text='.rawurlencode($context['body'])
+                        : '#',
+                    'sms' => filled($context['mobile'] ?? null)
+                        ? 'sms:'.$this->phoneForLink((string) $context['mobile']).'?body='.rawurlencode($context['body'])
+                        : '#',
+                    'mailto' => filled($context['email'] ?? null)
+                        ? 'mailto:'.$context['email'].'?subject='.rawurlencode($context['subject']).'&body='.rawurlencode($context['body'])
+                        : null,
+                ];
             });
 
-        $this->showBulkModal = false;
+        return $items;
+    }
 
-        Flux::toast(
-            variant: $skipped > 0 ? 'danger' : 'success',
-            text: __('Queued :sent reminder(s) via WhatsApp. :skipped task(s) skipped (no mobile on file).', ['sent' => $sent, 'skipped' => $skipped]),
-        );
+    /**
+     * Manually mark one bulk reminder as sent. Nothing is sent from the server.
+     */
+    public function bulkMarkSent(int $taskId): void
+    {
+        $task = DailyTask::query()->find($taskId);
 
-        unset($this->tasks, $this->counts);
+        if ($task === null) {
+            return;
+        }
+
+        $this->completeTask($task);
+        Flux::toast(variant: 'success', text: __('Marked as sent. Task marked done.'));
+
+        unset($this->tasks, $this->counts, $this->pendingReminders);
     }
 
     private function completeTask(DailyTask $task): void
@@ -590,8 +686,8 @@ new #[Title('Daily Operations')] class extends Component
 
             @if ($this->counts['remindersPending'] > 0)
                 <button type="button" wire:click="openBulkModal" class="inline-flex shrink-0 items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-2.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100">
-                    <flux:icon.paper-airplane class="size-4" />
-                    {{ __('Send all reminders (:count)', ['count' => $this->counts['remindersPending']]) }}
+                    <flux:icon.chat-bubble-left-right class="size-4" />
+                    {{ __('Manual reminders (:count)', ['count' => $this->counts['remindersPending']]) }}
                 </button>
             @endif
         </div>
@@ -761,42 +857,73 @@ new #[Title('Daily Operations')] class extends Component
     @endif
 
     @if ($showReminderModal)
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4" x-data="{ copied: false }">
             <div class="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" wire:click="$set('showReminderModal', false)"></div>
 
             <div class="relative w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl">
                 <div class="flex items-start justify-between">
                     <div>
-                        <h3 class="text-base font-semibold">{{ __('Send reminder') }}</h3>
-                        <p class="mt-0.5 text-xs text-slate-400">{{ __('Review the message, pick a channel, then send.') }}</p>
+                        <h3 class="text-base font-semibold">{{ __('Manual communication') }}</h3>
+                        <p class="mt-0.5 text-xs text-slate-400">{{ __('Review and edit, then open the app to send. Nothing is sent until you confirm yourself.') }}</p>
                     </div>
                     <button type="button" wire:click="$set('showReminderModal', false)" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"><flux:icon.x-mark class="size-4" /></button>
                 </div>
 
-                <form wire:submit="sendReminder" class="mt-4 space-y-3">
-                    <div class="grid grid-cols-2 gap-3">
-                        @foreach (['whatsapp' => 'WhatsApp', 'sms' => 'SMS'] as $value => $label)
-                            <label class="flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition {{ $channel === $value ? 'border-blue-500 bg-blue-50/50 ring-2 ring-blue-500/20' : 'border-slate-200 hover:border-slate-300' }}">
-                                <input type="radio" wire:model.live="channel" value="{{ $value }}" class="sr-only">
-                                <span class="flex size-9 items-center justify-center rounded-lg {{ $channel === $value ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500' }}">
-                                    <flux:icon.chat-bubble-left-right class="size-5" />
+                <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-xs">
+                    <p class="font-semibold text-slate-800">{{ $this->reminderContact['name'] ?? __('Borrower') }}</p>
+                    <dl class="mt-1.5 space-y-1 text-[11px] text-slate-500">
+                        <div class="flex justify-between gap-3"><dt>{{ __('Mobile') }}</dt><dd class="font-medium tabular-nums text-slate-700">{{ $this->reminderContact['mobile'] ?? '—' }}</dd></div>
+                        <div class="flex justify-between gap-3"><dt>{{ __('Email') }}</dt><dd class="break-all font-medium text-slate-700">{{ $this->reminderContact['email'] ?? __('Not on file') }}</dd></div>
+                    </dl>
+                </div>
+
+                <div class="mt-4 space-y-3">
+                    <div class="grid grid-cols-3 gap-2">
+                        @foreach (['whatsapp' => 'WhatsApp', 'sms' => 'SMS', 'email' => 'Email'] as $value => $label)
+                            @php($disabled = $value === 'email' && blank($this->reminderContact['email'] ?? null))
+                            <label class="flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border p-2.5 text-center transition {{ $channel === $value ? 'border-blue-500 bg-blue-50/50 ring-2 ring-blue-500/20' : 'border-slate-200 hover:border-slate-300' }} {{ $disabled ? 'cursor-not-allowed opacity-40' : '' }}">
+                                <input type="radio" wire:model.live="channel" value="{{ $value }}" @disabled($disabled) class="sr-only">
+                                <span class="flex size-8 items-center justify-center rounded-lg {{ $channel === $value ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500' }}">
+                                    <flux:icon.chat-bubble-left-right class="size-4" />
                                 </span>
-                                <span class="text-xs font-semibold text-slate-700">{{ $label }}</span>
+                                <span class="text-[11px] font-semibold text-slate-700">{{ $label }}</span>
                             </label>
                         @endforeach
                     </div>
-                    @error('channel') <p class="text-xs text-rose-600">{{ $message }}</p> @enderror
 
-                    <flux:textarea wire:model="message" :label="__('Message')" rows="4" maxlength="1000" required />
+                    @if ($channel === 'email')
+                        <flux:input wire:model="reminderSubject" :label="__('Subject')" maxlength="255" required />
+                    @endif
+
+                    <flux:textarea wire:model="message" :label="__('Message')" rows="4" maxlength="1000" required x-ref="messageField" />
                     @error('message') <p class="text-xs text-rose-600">{{ $message }}</p> @enderror
 
-                    <p class="text-[11px] text-slate-400">{{ __('Queued through the configured gateway and logged in message history. The task will be marked done once sent.') }}</p>
+                    <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
+                        <button type="button" x-on:click="navigator.clipboard.writeText($refs.messageField.value); copied = true; setTimeout(() => copied = false, 1500)"
+                                class="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900">
+                            <flux:icon.clipboard-document class="size-4" />
+                            <span x-text="copied ? @js(__('Copied!')) : @js(__('Copy message'))"></span>
+                        </button>
 
-                    <div class="flex items-center justify-end gap-2 pt-1">
-                        <button type="button" wire:click="$set('showReminderModal', false)" class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">{{ __('Cancel') }}</button>
-                        <flux:button type="submit" variant="primary" class="!rounded-xl">{{ __('Send reminder') }}</flux:button>
+                        <div class="flex items-center gap-2">
+                            <button type="button" wire:click="$set('showReminderModal', false)" class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">{{ __('Close') }}</button>
+                            @if ($this->reminderLink)
+                                <a href="{{ $this->reminderLink['url'] }}" target="_blank" rel="noopener" class="inline-flex items-center gap-1.5 rounded-xl bg-navy-900 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-navy-800">
+                                    {{ $this->reminderLink['label'] }}
+                                    <flux:icon.arrow-top-right-on-square class="size-4" />
+                                </a>
+                            @endif
+                        </div>
                     </div>
-                </form>
+
+                    <div class="flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
+                        <p class="text-[11px] leading-relaxed text-slate-400">{{ __('Message is opened in your SMS/WhatsApp/Email app. Review it, then send manually. Nothing is sent automatically.') }}</p>
+                        <button type="button" wire:click="markReminderSent" class="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2.5 text-xs font-semibold text-white transition hover:bg-emerald-700">
+                            <flux:icon.check class="size-4" />
+                            {{ __('Mark as sent') }}
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     @endif
@@ -805,22 +932,56 @@ new #[Title('Daily Operations')] class extends Component
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div class="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" wire:click="$set('showBulkModal', false)"></div>
 
-            <div class="relative w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
-                <div class="flex items-start justify-between">
+            <div class="relative flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+                <div class="flex items-start justify-between gap-3 border-b border-slate-100 p-5">
                     <div>
-                        <h3 class="text-base font-semibold">{{ __('Send all EMI reminders') }}</h3>
-                        <p class="mt-0.5 text-xs text-slate-400">{{ __('One WhatsApp message per pending reminder for :date.', ['date' => now()->parse($this->date)->format(\App\Support\Regional::dateFormat())]) }}</p>
+                        <h3 class="text-base font-semibold">{{ __('Manual EMI reminders') }}</h3>
+                        <p class="mt-0.5 text-xs text-slate-400">{{ __('Open each conversation yourself and review before sending — nothing is sent automatically.') }}</p>
                     </div>
                     <button type="button" wire:click="$set('showBulkModal', false)" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"><flux:icon.x-mark class="size-4" /></button>
                 </div>
 
-                <div class="mt-4 rounded-xl border border-blue-100 bg-blue-50/60 p-4 text-xs leading-relaxed text-blue-900">
-                    {{ __(':count reminder(s) will be queued via WhatsApp using each borrower’s mobile number on file. Tasks without a mobile number will be skipped. Sent tasks are marked done.', ['count' => $this->counts['remindersPending']]) }}
+                <div class="overflow-y-auto p-5">
+                    @if (count($this->pendingReminders) === 0)
+                        <p class="rounded-xl border border-dashed border-slate-200 px-3 py-8 text-center text-xs text-slate-400">{{ __('No pending EMI reminders for this day.') }}</p>
+                    @else
+                        <ul class="divide-y divide-slate-100 rounded-xl border border-slate-200">
+                            @foreach ($this->pendingReminders as $reminder)
+                                <li class="flex flex-wrap items-center gap-3 px-4 py-3" wire:key="bulk-reminder-{{ $reminder['id'] }}">
+                                    <div class="min-w-0 flex-1">
+                                        <p class="truncate text-xs font-semibold text-slate-800">{{ $reminder['name'] }}</p>
+                                        <p class="mt-0.5 truncate text-[11px] text-slate-400">
+                                            {{ $reminder['mobile'] ? __('Mobile :mobile', ['mobile' => $reminder['mobile']]) : __('No mobile on file') }}
+                                            @if ($reminder['email']) · {{ $reminder['email'] }} @endif
+                                        </p>
+                                    </div>
+                                    <div class="flex shrink-0 items-center gap-1.5">
+                                        @if ($reminder['mobile'])
+                                            <a href="{{ $reminder['whatsapp'] }}" target="_blank" rel="noopener" aria-label="{{ __('Open WhatsApp') }}" title="{{ __('Open WhatsApp') }}" class="flex size-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 transition hover:bg-emerald-100">
+                                                <flux:icon.chat-bubble-left-right class="size-4" />
+                                            </a>
+                                            <a href="{{ $reminder['sms'] }}" aria-label="{{ __('Open SMS') }}" title="{{ __('Open SMS') }}" class="flex size-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600 transition hover:bg-blue-100">
+                                                <flux:icon.device-phone-mobile class="size-4" />
+                                            </a>
+                                        @endif
+                                        @if ($reminder['mailto'])
+                                            <a href="{{ $reminder['mailto'] }}" aria-label="{{ __('Open Email') }}" title="{{ __('Open Email') }}" class="flex size-8 items-center justify-center rounded-lg bg-violet-50 text-violet-600 transition hover:bg-violet-100">
+                                                <flux:icon.envelope class="size-4" />
+                                            </a>
+                                        @endif
+                                        <button type="button" wire:click="bulkMarkSent({{ $reminder['id'] }})" class="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-emerald-700 transition hover:bg-emerald-50">
+                                            <flux:icon.check class="size-3.5" />
+                                            {{ __('Sent') }}
+                                        </button>
+                                    </div>
+                                </li>
+                            @endforeach
+                        </ul>
+                    @endif
                 </div>
 
-                <div class="mt-4 flex items-center justify-end gap-2">
-                    <button type="button" wire:click="$set('showBulkModal', false)" class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">{{ __('Cancel') }}</button>
-                    <flux:button wire:click="sendAllReminders" variant="primary" class="!rounded-xl">{{ __('Send :count reminder(s)', ['count' => $this->counts['remindersPending']]) }}</flux:button>
+                <div class="flex items-center justify-end border-t border-slate-100 p-4">
+                    <button type="button" wire:click="$set('showBulkModal', false)" class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">{{ __('Close') }}</button>
                 </div>
             </div>
         </div>
