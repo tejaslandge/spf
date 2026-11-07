@@ -133,6 +133,10 @@ new #[Title('Reports')] class extends Component
             ->whereBetween('payment_date', [$from->toDateString(), $to->toDateString()]);
 
         $overdue = EmiSchedule::query()->overdue();
+        $currentMonth = CarbonImmutable::today();
+        $expectedCollection = EmiSchedule::query()
+            ->whereBetween('due_date', [$currentMonth->startOfMonth()->toDateString(), $currentMonth->endOfMonth()->toDateString()])
+            ->sum('total_amount');
 
         return [
             'collected' => (string) (clone $payments)->sum('amount'),
@@ -145,6 +149,7 @@ new #[Title('Reports')] class extends Component
             'active_loans' => Loan::query()->where('status', LoanStatus::Active)->count(),
             'outstanding' => (string) Loan::query()->where('status', LoanStatus::Active)->sum('outstanding_principal'),
             'disbursed' => (string) Loan::query()->whereNotNull('disbursement_date')->sum('principal_amount'),
+            'expected_collection' => (string) $expectedCollection,
         ];
     }
 
@@ -330,10 +335,11 @@ new #[Title('Reports')] class extends Component
         @enderror
     </div>
 
-    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <x-stat-card :label="__('Collections')" :value="\App\Support\Money::format($this->summary['collected'])" :hint="__(':count receipts in period', ['count' => $this->summary['receipts']])" icon="banknotes" tone="blue" />
         <x-stat-card :label="__('Interest earned')" :value="\App\Support\Money::format($this->summary['interest'])" :hint="__('Recognised on collections')" icon="chart-bar" tone="emerald" />
         <x-stat-card :label="__('Principal recovered')" :value="\App\Support\Money::format($this->summary['principal'])" :hint="__('Against disbursed :amount', ['amount' => \App\Support\Money::format($this->summary['disbursed'])])" icon="arrow-uturn-left" tone="navy" />
+        <x-stat-card :label="__('Expected Collection (Monthly)')" :value="\App\Support\Money::format($this->summary['expected_collection'])" :hint="__('EMI schedules due this month')" icon="calendar-days" tone="amber" />
         <x-stat-card :label="__('Overdue EMIs')" :value="(string) $this->summary['overdue_count']" :hint="\App\Support\Money::format($this->summary['overdue_amount']).' '.__('past due')" icon="exclamation-triangle" tone="rose" />
     </div>
 
