@@ -1,6 +1,9 @@
 <?php
 
+use App\Enums\DepositStatus;
+use App\Models\InterestConfiguration;
 use App\Models\Investor;
+use App\Support\Money;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
@@ -12,6 +15,12 @@ new #[Title('Investors')] class extends Component
 
     public string $search = '';
 
+    #[Computed]
+    public function defaultInvestorMonthlyRate(): string
+    {
+        return (string) (InterestConfiguration::activeFor()?->default_investor_monthly_rate ?? '0');
+    }
+
     /**
      * @return \Illuminate\Contracts\Pagination\LengthAwarePaginator<int, Investor>
      */
@@ -22,8 +31,28 @@ new #[Title('Investors')] class extends Component
             ->search($this->search)
             ->withCount(['allocations' => fn ($query) => $query->where('status', 'active')])
             ->withSum(['allocations as active_capital_sum' => fn ($query) => $query->where('status', 'active')], 'principal_amount')
+            ->withSum(['deposits as cleared_deposits_sum' => fn ($query) => $query->where('status', DepositStatus::Cleared->value)], 'amount')
+            ->with('currentInterestRate')
             ->latest()
             ->paginate(\App\Services\Settings\UserPreferenceService::rowsPerPageFor(auth()->user(), 12));
+    }
+
+    public function availableCapitalFor(Investor $investor): string
+    {
+        $available = Money::sub(
+            (string) ($investor->cleared_deposits_sum ?? '0'),
+            (string) ($investor->active_capital_sum ?? '0'),
+        );
+
+        return Money::compare($available, '0') > 0 ? Money::round($available) : '0.00';
+    }
+
+    public function monthlyPayoutAmountFor(Investor $investor): string
+    {
+        $totalClearedInvestmentAmount = (string) ($investor->cleared_deposits_sum ?? '0');
+        $allocatedPercentage = (string) ($investor->currentInterestRate?->monthly_rate ?? $this->defaultInvestorMonthlyRate);
+
+        return Money::round(Money::div(Money::mul($totalClearedInvestmentAmount, $allocatedPercentage), '100'));
     }
 };
 ?>
@@ -58,6 +87,9 @@ new #[Title('Investors')] class extends Component
                         <th class="px-5 py-3">{{ __('Investor') }}</th>
                         <th class="px-5 py-3">{{ __('Contact') }}</th>
                         <th class="px-5 py-3 text-end">{{ __('Allocated capital') }}</th>
+                        <th class="px-5 py-3 text-end">{{ __('Invested Allocation Cleared') }}</th>
+                        <th class="px-5 py-3 text-end">{{ __('Available Capital') }}</th>
+                        <th class="px-5 py-3 text-end">{{ __('Monthly Payout Amount') }}</th>
                         <th class="px-5 py-3">{{ __('Allocations') }}</th>
                         <th class="px-5 py-3">{{ __('Status') }}</th>
                         <th class="px-5 py-3"></th>
@@ -80,6 +112,9 @@ new #[Title('Investors')] class extends Component
                                 <p class="text-[11px] text-slate-400">{{ $investor->email ?: '—' }}</p>
                             </td>
                             <td class="whitespace-nowrap px-5 py-3 text-end font-semibold tabular-nums text-slate-800">{{ \App\Support\Money::format($investor->active_capital_sum) }}</td>
+                            <td class="whitespace-nowrap px-5 py-3 text-end tabular-nums text-slate-600">{{ \App\Support\Money::format($investor->cleared_deposits_sum) }}</td>
+                            <td class="whitespace-nowrap px-5 py-3 text-end tabular-nums text-slate-600">{{ \App\Support\Money::format($this->availableCapitalFor($investor)) }}</td>
+                            <td class="whitespace-nowrap px-5 py-3 text-end tabular-nums text-slate-600">{{ \App\Support\Money::format($this->monthlyPayoutAmountFor($investor)) }}</td>
                             <td class="px-5 py-3 text-slate-600">{{ $investor->allocations_count }}</td>
                             <td class="px-5 py-3"><x-status-badge :status="$investor->status" /></td>
                             <td class="px-5 py-3 text-end">
@@ -87,7 +122,7 @@ new #[Title('Investors')] class extends Component
                             </td>
                         </tr>
                     @empty
-                        <tr><td colspan="6" class="px-5 py-14 text-center"><p class="text-sm font-medium text-slate-600">{{ __('No investors found') }}</p><p class="mt-1 text-xs text-slate-400">{{ __('Add an investor to start allocating capital.') }}</p></td></tr>
+                        <tr><td colspan="9" class="px-5 py-14 text-center"><p class="text-sm font-medium text-slate-600">{{ __('No investors found') }}</p><p class="mt-1 text-xs text-slate-400">{{ __('Add an investor to start allocating capital.') }}</p></td></tr>
                     @endforelse
                 </tbody>
             </table>

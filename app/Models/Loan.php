@@ -7,7 +7,6 @@ use App\Enums\InterestMethod;
 use App\Enums\LoanFundingStatus;
 use App\Enums\LoanStatus;
 use App\Models\Concerns\Auditable;
-use App\Models\ForeclosureRequest;
 use Database\Factories\LoanFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
@@ -121,6 +120,7 @@ class Loan extends Model
     public function guarantors(): BelongsToMany
     {
         return $this->belongsToMany(Guarantor::class, 'loan_guarantors')
+            ->withPivot(['relationship', 'custom_relationship'])
             ->withTimestamps()
             ->orderBy('guarantors.id');
     }

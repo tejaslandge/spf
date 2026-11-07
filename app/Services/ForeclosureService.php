@@ -2,15 +2,23 @@
 
 namespace App\Services;
 
+use App\Enums\InterestMethod;
 use App\Enums\LoanStatus;
-use App\Models\Loan;
 use App\Models\ForeclosureRequest;
+use App\Models\Loan;
+use App\Models\User;
+use App\Services\Settings\SettingsService;
+use App\Support\AuditLogger;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
 final class ForeclosureService
 {
+    public function __construct(
+        private readonly LoanEmiSettlementService $loanEmiSettlementService,
+    ) {}
+
     /**
      * Calculate the foreclosure amount for a loan.
      *
@@ -24,13 +32,14 @@ final class ForeclosureService
      * Future interest is always excluded.
      *
      * @param  array<mixed, mixed>  $calculationInputs
-     *   - foreclosure_effective_date: date
-     *   - foreclosure_charges_enabled: bool
-     *   - foreclosure_charge_type: string ('fixed'|'percentage')
-     *   - foreclosure_charge_value: decimal
-     *   - foreclosure_charge_minimum: decimal
-     *   - foreclosure_charge_maximum: decimal
-     *   - effective_from_date: date (for charge applicability)
+     *                                                  - foreclosure_effective_date: date
+     *                                                  - foreclosure_charges_enabled: bool
+     *                                                  - foreclosure_charge_type: string ('fixed'|'percentage')
+     *                                                  - foreclosure_charge_value: decimal
+     *                                                  - foreclosure_charge_minimum: decimal
+     *                                                  - foreclosure_charge_maximum: decimal
+     *                                                  - effective_from_date: date (for charge applicability)
+     *                                                  - waive_accrued_interest: bool (exclude accrued interest from the settlement)
      */
     public function calculateForeclosureAmount(Loan $loan, array $inputs): ForeclosureCalculation
     {
@@ -42,6 +51,7 @@ final class ForeclosureService
         $chargeMaximum = $inputs['foreclosure_charge_maximum'] !== null
             ? Money::round((string) $inputs['foreclosure_charge_maximum'])
             : null;
+        $waiveAccruedInterest = (bool) ($inputs['waive_accrued_interest'] ?? false);
 
         // 1. Outstanding principal snapshot (as of the foreclosure date)
         $outstandingPrincipal = Money::round($loan->outstanding_principal);
@@ -72,14 +82,21 @@ final class ForeclosureService
         // 5. Eligible adjustments or credits (e.g., part-payments already made)
         $eligibleAdjustments = $this->calculateEligibleAdjustments($loan);
 
+        // 5b. Optionally waive the accrued interest so the borrower only pays
+        // the outstanding principal (plus dues/charges and other credits).
+        $waivedInterest = $waiveAccruedInterest ? $accruedInterest : '0.00';
+
         // 6. Calculate total foreclosure amount
         $totalSettlement = Money::round(
-            Money::add(
+            Money::sub(
                 Money::add(
-                    Money::add($outstandingPrincipal, $accruedInterest),
-                    $foreclosureCharges
+                    Money::add(
+                        Money::add($outstandingPrincipal, $accruedInterest),
+                        $foreclosureCharges
+                    ),
+                    $otherOutstandingDues
                 ),
-                $otherOutstandingDues
+                Money::add($eligibleAdjustments, $waivedInterest)
             )
         );
 
@@ -97,6 +114,7 @@ final class ForeclosureService
             effective_date: $effectiveDate,
             charges_enabled: $chargesEnabled,
             charge_type: $chargeType,
+            waived_interest: $waivedInterest,
         );
     }
 
@@ -127,14 +145,15 @@ final class ForeclosureService
             return '0.00';
         }
 
-        if ($interestMethod === 'flat') {
+        if ($interestMethod === InterestMethod::Flat) {
             // Flat interest: total interest is spread across the tenure
             // Accrued interest = (total_interest * months_elapsed) / tenure_months
             $totalInterest = Money::round((string) $loan->total_interest);
             if (Money::isZero($totalInterest)) {
                 return '0.00';
             }
-            $accrued = Money::round(bcdiv(Money::mul($totalInterest, (string) $monthsElapsed), (string) $tenureMonths, 10);
+            $accrued = Money::round(bcdiv(Money::mul($totalInterest, (string) $monthsElapsed), (string) $tenureMonths, 10));
+
             return $accrued;
         } else {
             // Reducing balance: calculate interest month-by-month up to the effective date
@@ -226,18 +245,14 @@ final class ForeclosureService
     {
         // Adjustments include any reversed payments that need to be
         // credit back to the settlement amount
-        $reversedPayments = $loan->payments()
+        $reversedPayments = (string) ($loan->payments()
             ->where('is_reversed', true)
-            ->sum(function ($payment) {
-                return Money::round((string) $payment->principal_component);
-            });
+            ->sum('principal_component') ?? '0');
 
         // Also consider any interest distribution adjustments
-        $distributionAdjustments = $loan->distributionEntries()
+        $distributionAdjustments = (string) ($loan->distributionEntries()
             ->where('status', 'reversed')
-            ->sum(function ($entry) {
-                return Money::round((string) $entry->amount);
-            });
+            ->sum('amount') ?? '0');
 
         return Money::round(
             Money::add(
@@ -248,13 +263,34 @@ final class ForeclosureService
     }
 
     /**
+     * Build calculation inputs from the configured foreclosure policy settings.
+     *
+     * @return array<string, mixed>
+     */
+    public function settingsInputs(?string $effectiveDate = null, bool $waiveAccruedInterest = false): array
+    {
+        $settings = app(SettingsService::class);
+
+        return [
+            'foreclosure_effective_date' => $effectiveDate ?? now()->toDateString(),
+            'foreclosure_charges_enabled' => $settings->getBool('loan.foreclosure_charges_enabled', false),
+            'foreclosure_charge_type' => $settings->get('loan.foreclosure_charge_type', 'fixed'),
+            'foreclosure_charge_value' => $settings->getDecimal('loan.foreclosure_charge_value', '0'),
+            'foreclosure_charge_minimum' => $settings->getDecimal('loan.foreclosure_charge_minimum', '0'),
+            'foreclosure_charge_maximum' => $settings->get('loan.foreclosure_charge_maximum'),
+            'effective_from_date' => $settings->get('loan.foreclosure_effective_from'),
+            'waive_accrued_interest' => $waiveAccruedInterest,
+        ];
+    }
+
+    /**
      * Record a foreclosure request in the database.
      */
     public function recordRequest(Loan $loan, User $actor, array $inputs): ForeclosureRequest
     {
         $calculation = $this->calculateForeclosureAmount($loan, $inputs);
 
-        return DB::transaction(function () use ($loan, $actor, $calculation): ForeclosureRequest {
+        return DB::transaction(function () use ($loan, $calculation): ForeclosureRequest {
             $request = ForeclosureRequest::create([
                 'loan_id' => $loan->getKey(),
                 'borrower_id' => $loan->borrower_id,
@@ -264,22 +300,19 @@ final class ForeclosureService
                 'foreclosure_charges' => $calculation->foreclosure_charges,
                 'total_settlement' => $calculation->total_settlement,
                 'eligible_adjustments' => $calculation->eligible_adjustments,
-                'foreclosure_request_date': now()->toDateString(),
+                'waived_interest' => $calculation->waived_interest,
+                'foreclosure_request_date' => now()->toDateString(),
                 'effective_foreclosure_date' => $calculation->effective_date->toDateString(),
-                'approval_status': 'pending',
-                'payment_status': 'unpaid',
+                'approval_status' => 'pending',
+                'payment_status' => 'unpaid',
             ]);
 
-            // Audit log
-            $loan->auditLogs()->create([
-                'user_id' => $actor->id,
-                'action': 'foreclosure.requested',
-                'new_values': json_encode([
-                    'outstanding_principal' => $calculation->outstanding_principal,
-                    'accrued_interest' => $calculation->accrued_interest,
-                    'foreclosure_charges' => $calculation->foreclosure_charges,
-                    'total_settlement' => $calculation->total_settlement,
-                ]),
+            AuditLogger::log('foreclosure.requested', $loan, [], [
+                'outstanding_principal' => $calculation->outstanding_principal,
+                'accrued_interest' => $calculation->accrued_interest,
+                'foreclosure_charges' => $calculation->foreclosure_charges,
+                'total_settlement' => $calculation->total_settlement,
+                'waived_interest' => $calculation->waived_interest,
             ]);
 
             return $request;
@@ -293,7 +326,7 @@ final class ForeclosureService
     {
         return DB::transaction(function () use ($request, $actor): ForeclosureRequest {
             $request->forceFill([
-                'approval_status': 'approved',
+                'approval_status' => 'approved',
                 'approved_by' => $actor->id,
             ])->save();
 
@@ -301,43 +334,41 @@ final class ForeclosureService
 
             // Mark loan as foreclosed
             $loan->forceFill([
-                'status': LoanStatus::Foreclosed->value,
+                'status' => LoanStatus::Foreclosed->value,
             ])->save();
+
+            $this->loanEmiSettlementService->settleRemainingUnpaidAsPaid($loan, 'foreclosure');
 
             // Record payment date and closure date
             $today = now();
 
-            // Create the payment record for the foreclosure amount
-            $receiptNo = 'RCPT-'.str_pad((string) (ForeclosureRequest::withTrashed()->max('id') ?? 0) + 1, 6, '0', STR_PAD_LEFT);
-
-            $loan->emiPayments()->create([
-                'receipt_no': $receiptNo,
-                'amount': $request->total_settlement,
-                'principal_component': $request->outstanding_principal,
-                'interest_component': $request->accrued_interest,
-                'penalty_amount': $request->foreclosure_charges,
-                'payment_date': $today->toDateString(),
-                'payment_method': 'cash',
-                'reference': 'FORECLOSURE-'.$request->id,
-                'notes': 'Loan foreclosure settlement',
+            // Create the payment record for the foreclosure amount. The
+            // receipt number is generated by the EmiPayment model so it stays
+            // in sync with regular EMI receipts.
+            $loan->payments()->create([
+                'amount' => $request->total_settlement,
+                'principal_component' => $request->outstanding_principal,
+                'interest_component' => Money::sub($request->accrued_interest, $request->waived_interest),
+                'penalty_amount' => $request->foreclosure_charges,
+                'payment_date' => $today->toDateString(),
+                'payment_method' => 'cash',
+                'reference' => 'FORECLOSURE-'.$request->id,
+                'notes' => 'Loan foreclosure settlement',
             ]);
 
             // Update request with payment and closure dates
             $request->forceFill([
-                'payment_status': 'paid',
-                'payment_date': $today->toDateString(),
-                'actual_closure_date': $today->toDateString(),
+                'payment_status' => 'paid',
+                'payment_date' => $today->toDateString(),
+                'actual_closure_date' => $today->toDateString(),
             ])->save();
 
             // Audit log
-            $loan->auditLogs()->create([
-                'user_id' => $actor->id,
-                'action': 'foreclosure.approved',
-                'new_values': json_encode([
-                    'total_settlement' => $request->total_settlement,
-                    'approval_status': 'approved',
-                    'actual_closure_date' => $today->toDateString(),
-                ]),
+            AuditLogger::log('foreclosure.approved', $loan, [], [
+                'total_settlement' => $request->total_settlement,
+                'waived_interest' => $request->waived_interest,
+                'approval_status' => 'approved',
+                'actual_closure_date' => $today->toDateString(),
             ]);
 
             return $request->refresh();
@@ -349,20 +380,16 @@ final class ForeclosureService
      */
     public function rejectRequest(ForeclosureRequest $request, User $actor, string $rejectionReason): ForeclosureRequest
     {
-        return DB::transaction(function () use ($request, $actor, $rejectionReason): ForeclosureRequest {
+        return DB::transaction(function () use ($request, $rejectionReason): ForeclosureRequest {
             $request->forceFill([
-                'approval_status': 'rejected',
-                'rejection_reason': $rejectionReason,
+                'approval_status' => 'rejected',
+                'rejection_reason' => $rejectionReason,
             ])->save();
 
             // Audit log
-            $request->loan->auditLogs()->create([
-                'user_id' => $actor->id,
-                'action': 'foreclosure.rejected',
-                'new_values': json_encode([
-                    'rejection_reason' => $rejectionReason,
-                    'approval_status': 'rejected',
-                ]),
+            AuditLogger::log('foreclosure.rejected', $request->loan, [], [
+                'rejection_reason' => $rejectionReason,
+                'approval_status' => 'rejected',
             ]);
 
             return $request->refresh();
@@ -370,53 +397,57 @@ final class ForeclosureService
     }
 
     /**
-     * Process foreclosure payment - record payment without necessarily
-     * changing the approval status (e.g., for partial payments or
-     * pending approval scenarios).
+     * Process foreclosure payment for an approved request and complete the foreclosure.
      */
     public function processPayment(ForeclosureRequest $request, User $actor, string $paymentMethod = 'cash', ?string $reference = null): ForeclosureRequest
     {
-        return DB::transaction(function () use ($request, $actor, $paymentMethod, $reference): ForeclosureRequest {
-            // Prevent duplicate payments
-            if ($request->payment_status === 'paid') {
+        return DB::transaction(function () use ($request, $paymentMethod, $reference): ForeclosureRequest {
+            /** @var ForeclosureRequest $locked */
+            $locked = ForeclosureRequest::query()->lockForUpdate()->findOrFail($request->getKey());
+
+            if ($locked->payment_status === 'paid') {
                 throw new \InvalidArgumentException('Foreclosure payment has already been processed for this request.');
             }
 
-            $today = now();
+            if ($locked->approval_status !== 'approved') {
+                throw new \InvalidArgumentException('Only approved foreclosure requests can be paid.');
+            }
 
-            $request->forceFill([
-                'payment_status': 'paid',
-                'payment_date': $today->toDateString(),
-                'actual_closure_date': $today->toDateString(),
+            /** @var Loan $loan */
+            $loan = Loan::query()->lockForUpdate()->findOrFail($locked->loan_id);
+
+            $loan->forceFill([
+                'status' => LoanStatus::Foreclosed->value,
             ])->save();
 
-            // Create payment record
-            $receiptNo = 'RCPT-'.str_pad((string) (ForeclosureRequest::withTrashed()->max('id') ?? 0) + 1, 6, '0', STR_PAD_LEFT);
+            $this->loanEmiSettlementService->settleRemainingUnpaidAsPaid($loan, 'foreclosure');
 
-            $request->loan->emiPayments()->create([
-                'receipt_no': $receiptNo,
-                'amount': $request->total_settlement,
-                'principal_component': $request->outstanding_principal,
-                'interest_component': $request->accrued_interest,
-                'penalty_amount': $request->foreclosure_charges,
-                'payment_date': $today->toDateString(),
-                'payment_method': $paymentMethod,
-                'reference': $reference ?: 'FORECLOSURE-'.$request->id,
-                'notes': 'Loan foreclosure settlement payment',
+            $today = now();
+
+            $locked->forceFill([
+                'payment_status' => 'paid',
+                'payment_date' => $today->toDateString(),
+                'actual_closure_date' => $today->toDateString(),
+            ])->save();
+
+            $loan->payments()->create([
+                'amount' => $locked->total_settlement,
+                'principal_component' => $locked->outstanding_principal,
+                'interest_component' => Money::sub($locked->accrued_interest, $locked->waived_interest),
+                'penalty_amount' => $locked->foreclosure_charges,
+                'payment_date' => $today->toDateString(),
+                'payment_method' => $paymentMethod,
+                'reference' => $reference ?: 'FORECLOSURE-'.$locked->id,
+                'notes' => 'Loan foreclosure settlement payment',
             ]);
 
-            // Audit log
-            $request->loan->auditLogs()->create([
-                'user_id' => $actor->id,
-                'action': 'foreclosure.payment_processed',
-                'new_values': json_encode([
-                    'total_settlement' => $request->total_settlement,
-                    'payment_status': 'paid',
-                    'payment_date' => $today->toDateString(),
-                ]),
+            AuditLogger::log('foreclosure.payment_processed', $loan, [], [
+                'total_settlement' => $locked->total_settlement,
+                'payment_status' => 'paid',
+                'payment_date' => $today->toDateString(),
             ]);
 
-            return $request->refresh();
+            return $locked->refresh();
         });
     }
 }

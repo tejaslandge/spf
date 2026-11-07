@@ -64,7 +64,7 @@
                         <ol class="flex items-center gap-2 text-[11px] font-semibold" aria-label="{{ __('Sign-in progress') }}">
                             <li class="flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-700 ring-1 ring-emerald-200">
                                 <flux:icon.check-circle class="size-3.5" />
-                                {{ __('Password') }}
+                                {{ __('Mobile number') }}
                             </li>
                             <li class="h-px flex-1 bg-zinc-200" aria-hidden="true"></li>
                             <li class="flex items-center gap-1.5 rounded-full bg-navy-900 px-2.5 py-1 text-white">

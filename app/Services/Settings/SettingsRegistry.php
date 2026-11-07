@@ -60,7 +60,7 @@ final class SettingsRegistry
             'loan.min_tenure_months' => ['group' => self::GROUP_LOAN, 'type' => 'integer', 'default' => 1, 'label' => 'Minimum tenure (months)'],
             'loan.max_tenure_months' => ['group' => self::GROUP_LOAN, 'type' => 'integer', 'default' => 360, 'label' => 'Maximum tenure (months)'],
             'loan.tenure_options' => ['group' => self::GROUP_LOAN, 'type' => 'json', 'default' => [6, 12, 18, 24, 36], 'label' => 'Available tenure options'],
-            'loan.default_monthly_rate' => ['group' => self::GROUP_LOAN, 'type' => 'decimal', 'default' => '1.5', 'label' => 'Default monthly interest rate'],
+            'loan.default_monthly_rate' => ['group' => self::GROUP_LOAN, 'type' => 'decimal', 'default' => '4', 'label' => 'Default monthly interest rate'],
             'loan.min_monthly_rate' => ['group' => self::GROUP_LOAN, 'type' => 'decimal', 'default' => '0', 'label' => 'Minimum monthly interest rate'],
             'loan.max_monthly_rate' => ['group' => self::GROUP_LOAN, 'type' => 'decimal', 'default' => '5', 'label' => 'Maximum monthly interest rate'],
             'loan.allowed_interest_methods' => ['group' => self::GROUP_LOAN, 'type' => 'json', 'default' => ['flat', 'reducing'], 'label' => 'Allowed interest methods'],

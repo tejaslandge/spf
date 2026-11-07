@@ -48,9 +48,17 @@
                     <flux:sidebar.item icon="users" :href="route('borrowers.index')" :current="request()->routeIs('borrowers.*')" wire:navigate>
                         {{ __('Borrowers') }}
                     </flux:sidebar.item>
+                    <flux:sidebar.item icon="shield-check" :href="route('guarantors.index')" :current="request()->routeIs('guarantors.*')" wire:navigate>
+                        {{ __('Guarantors') }}
+                    </flux:sidebar.item>
                     <flux:sidebar.item icon="banknotes" :href="route('loans.index')" :current="request()->routeIs('loans.*')" wire:navigate>
                         {{ __('Loans') }}
                     </flux:sidebar.item>
+                    @if (auth()->user()->canManageForeclosures())
+                        <flux:sidebar.item icon="fire" :href="route('foreclosure.requests')" :current="request()->routeIs('foreclosure.requests')" wire:navigate>
+                            {{ __('Foreclosures') }}
+                        </flux:sidebar.item>
+                    @endif
                     <flux:sidebar.item icon="receipt-percent" :href="route('collections.index')" :current="request()->routeIs('collections.*')" wire:navigate>
                         {{ __('EMI Collections') }}
                     </flux:sidebar.item>

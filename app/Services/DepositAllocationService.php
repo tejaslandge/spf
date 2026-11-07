@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\AllocationStatus;
 use App\Enums\DepositStatus;
 use App\Enums\Permission;
+use App\Enums\UserRole;
 use App\Models\DepositStatusHistory;
 use App\Models\InvestorAllocation;
 use App\Models\InvestorDeposit;
@@ -60,7 +61,7 @@ final class DepositAllocationService
         if ($newStatus === DepositStatus::Cleared
             && $this->settings->getBool('deposit.verification_required', true)
             && ! $actor->isSuperAdmin()
-            && $actor->role !== 'admin') {
+            && $actor->role !== UserRole::Admin) {
             throw ValidationException::withMessages([
                 'status' => 'Deposit verification requires a Super Admin or Admin to clear this deposit.',
             ]);

@@ -82,17 +82,6 @@ class OtpVerificationController extends Controller
         $otp->clear();
         $request->session()->forget(['login.id', 'login.remember']);
 
-        // Preserve the existing Fortify two-factor challenge as an additional
-        // layer for accounts that have confirmed 2FA enabled.
-        if ($user->hasEnabledTwoFactorAuthentication()) {
-            $request->session()->put([
-                'login.id' => $user->getKey(),
-                'login.remember' => $remember,
-            ]);
-
-            return redirect()->route('two-factor.login');
-        }
-
         Auth::login($user, $remember);
         $request->session()->regenerate();
 
@@ -165,7 +154,7 @@ class OtpVerificationController extends Controller
 
         return redirect()
             ->route('login')
-            ->with('status', __('Sign-in cancelled. Enter your credentials to try again.'));
+            ->with('status', __('Sign-in cancelled. Enter your registered mobile number to try again.'));
     }
 
     private function restart(string $message): RedirectResponse

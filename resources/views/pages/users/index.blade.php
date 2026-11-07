@@ -5,10 +5,8 @@ use App\Enums\Permission;
 use App\Enums\UserRole;
 use App\Models\AuditLog;
 use App\Models\User;
-use App\Services\Security\PasswordPolicyService;
 use App\Support\AuditLogger;
 use Flux\Flux;
-use Illuminate\Support\Facades\Password;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -35,8 +33,6 @@ new #[Title('User & Permissions')] class extends Component
     public string $designation = '';
 
     public bool $applyTemplate = true;
-
-    public string $password = '';
 
     public ?int $editingId = null;
 
@@ -104,7 +100,7 @@ new #[Title('User & Permissions')] class extends Component
     {
         $this->authorizeSuperAdmin();
 
-        $this->reset(['name', 'email', 'mobile', 'password', 'designation', 'editingId']);
+        $this->reset(['name', 'email', 'mobile', 'designation', 'editingId']);
         $this->role = 'admin';
         $this->applyTemplate = true;
         $this->resetValidation();
@@ -121,10 +117,9 @@ new #[Title('User & Permissions')] class extends Component
         $validated = $this->validate([
             'name' => ['required', 'string', 'min:2', 'max:255'],
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')],
-            'mobile' => ['nullable', 'digits:10', Rule::unique('users', 'mobile')],
+            'mobile' => ['required', 'digits:10', Rule::unique('users', 'mobile')],
             'role' => ['required', Rule::enum(UserRole::class)],
             'designation' => ['nullable', Rule::enum(AdminDesignation::class)],
-            'password' => ['required', 'string', ...app(PasswordPolicyService::class)->rules()],
             'applyTemplate' => ['boolean'],
         ]);
 
@@ -139,12 +134,11 @@ new #[Title('User & Permissions')] class extends Component
         $user = User::query()->create([
             'name' => $validated['name'],
             'email' => $validated['email'],
-            'mobile' => $validated['mobile'] ?: null,
+            'mobile' => $validated['mobile'],
             'role' => UserRole::from($validated['role']),
             'designation' => $designation,
             'permissions' => $permissions,
             'status' => 'active',
-            'password' => $validated['password'],
             'email_verified_at' => now(),
         ]);
 
@@ -189,7 +183,7 @@ new #[Title('User & Permissions')] class extends Component
         $validated = $this->validate([
             'name' => ['required', 'string', 'min:2', 'max:255'],
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
-            'mobile' => ['nullable', 'digits:10', Rule::unique('users', 'mobile')->ignore($user->id)],
+            'mobile' => ['required', 'digits:10', Rule::unique('users', 'mobile')->ignore($user->id)],
             'designation' => ['nullable', Rule::enum(AdminDesignation::class)],
         ]);
 
@@ -203,7 +197,7 @@ new #[Title('User & Permissions')] class extends Component
         $user->update([
             'name' => $validated['name'],
             'email' => $validated['email'],
-            'mobile' => $validated['mobile'] ?: null,
+            'mobile' => $validated['mobile'],
             'designation' => filled($validated['designation'] ?? null) ? AdminDesignation::from($validated['designation']) : null,
         ]);
 
@@ -310,25 +304,6 @@ new #[Title('User & Permissions')] class extends Component
         Flux::toast(variant: 'success', text: __('Access updated.'));
     }
 
-    public function sendPasswordReset(int $userId): void
-    {
-        $this->authorizeSuperAdmin();
-
-        $user = User::query()->findOrFail($userId);
-
-        $status = Password::broker()->sendResetLink(['email' => $user->email]);
-
-        AuditLogger::log('admin.password_reset_requested', $user, [], ['status' => $status]);
-
-        if ($status === Password::RESET_LINK_SENT) {
-            Flux::toast(variant: 'success', text: __('Password reset link sent to :email.', ['email' => $user->email]));
-
-            return;
-        }
-
-        Flux::toast(variant: 'danger', text: __('The password reset link could not be sent.'));
-    }
-
     public function openActivityModal(int $userId): void
     {
         $this->authorizeSuperAdmin();
@@ -417,7 +392,6 @@ new #[Title('User & Permissions')] class extends Component
                                     @unless ($user->isSuperAdmin())
                                         <button type="button" wire:click="openPermissionsModal({{ $user->id }})" class="text-[11px] font-semibold text-violet-600 hover:text-violet-700">{{ __('Permissions') }}</button>
                                     @endunless
-                                    <button type="button" wire:click="sendPasswordReset({{ $user->id }})" class="text-[11px] font-semibold text-slate-500 hover:text-slate-700">{{ __('Reset password') }}</button>
                                     <button type="button" wire:click="openActivityModal({{ $user->id }})" class="text-[11px] font-semibold text-slate-500 hover:text-slate-700">{{ __('Activity') }}</button>
                                     <button type="button" wire:click="toggleStatus({{ $user->id }})" class="text-[11px] font-semibold {{ $user->status === 'active' ? 'text-amber-600 hover:text-amber-700' : 'text-emerald-600 hover:text-emerald-700' }}">
                                         {{ $user->status === 'active' ? __('Deactivate') : __('Activate') }}
@@ -450,7 +424,7 @@ new #[Title('User & Permissions')] class extends Component
 
                     <div class="grid gap-3 sm:grid-cols-2">
                         <flux:input wire:model="email" type="email" :label="__('Email address')" required maxlength="255" />
-                        <flux:input wire:model="mobile" :label="__('Mobile')" placeholder="10-digit mobile" inputmode="numeric" maxlength="10" />
+                        <flux:input wire:model="mobile" :label="__('Mobile')" placeholder="10-digit mobile" inputmode="numeric" maxlength="10" required />
                     </div>
                     @error('email') <p class="text-xs text-rose-600">{{ $message }}</p> @enderror
                     @error('mobile') <p class="text-xs text-rose-600">{{ $message }}</p> @enderror

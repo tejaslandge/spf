@@ -11,9 +11,7 @@ use App\Services\Auth\RenflairSmsService;
 use App\Services\Security\LoginAttemptService;
 use App\Support\PhoneNumber;
 use Illuminate\Http\RedirectResponse;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
@@ -25,7 +23,7 @@ class LoginController extends Controller
     }
 
     /**
-     * Verify the password, then start a pending OTP challenge.
+     * Start a pending OTP challenge for the registered mobile number.
      *
      * The user is intentionally not authenticated here. Authentication only
      * happens after the registered mobile number has been verified.
@@ -36,8 +34,7 @@ class LoginController extends Controller
         LoginOtpService $otp,
         LoginAttemptService $attempts,
     ): RedirectResponse {
-        $login = Str::lower(trim((string) $request->input('email')));
-        $password = (string) $request->input('password');
+        $login = (string) $request->input('mobile');
         $remember = $request->boolean('remember');
 
         if ($attempts->isLocked($login, $request->ip())) {
@@ -47,20 +44,19 @@ class LoginController extends Controller
                 : $attempts->lockoutMinutes();
 
             throw ValidationException::withMessages([
-                'email' => __('Too many failed sign-in attempts. Your account is locked for :minutes more minute(s).', ['minutes' => $minutes]),
+                'mobile' => __('Too many failed sign-in attempts. Your account is locked for :minutes more minute(s).', ['minutes' => $minutes]),
             ]);
         }
 
         $user = User::query()
-            ->where('email', $login)
-            ->orWhere('mobile', $login)
+            ->whereIn('mobile', array_unique([$login, '91'.$login, '+91'.$login]))
             ->first();
 
-        if (! $user || $user->status !== 'active' || ! Hash::check($password, $user->password)) {
+        if (! $user || $user->status !== 'active') {
             $attempts->recordFailure($login, $request->ip());
 
             throw ValidationException::withMessages([
-                'email' => __('auth.failed'),
+                'mobile' => __('auth.failed'),
             ]);
         }
 
@@ -68,15 +64,11 @@ class LoginController extends Controller
 
         if ($phone === null) {
             throw ValidationException::withMessages([
-                'email' => __('This account is not set up for mobile verification. Please contact your administrator.'),
+                'mobile' => __('This account is not set up for mobile verification. Please contact your administrator.'),
             ]);
         }
 
         $attempts->clear($login, $request->ip());
-
-        if (Hash::needsRehash($user->password)) {
-            $user->forceFill(['password' => $password])->save();
-        }
 
         $code = $otp->start($user, $remember);
         $otp->logCode($code);

@@ -3,6 +3,8 @@
 use App\Enums\BorrowerStatus;
 use App\Enums\KycDocumentType;
 use App\Models\Borrower;
+use App\Models\Guarantor;
+use App\Services\GuarantorService;
 use App\Services\Settings\KycSettings;
 use Flux\Flux;
 use Illuminate\Support\Facades\DB;
@@ -22,6 +24,12 @@ new #[Title('Borrower')] class extends Component
     public string $full_name = '';
 
     public string $address = '';
+
+    public string $state = '';
+
+    public string $pincode = '';
+
+    public string $occupation = '';
 
     public string $mobile = '';
 
@@ -53,6 +61,8 @@ new #[Title('Borrower')] class extends Component
 
     public $employment_proof = null;
 
+    public bool $also_add_as_guarantor = false;
+
     public function mount(?Borrower $borrower = null): void
     {
         $this->borrower = $borrower;
@@ -61,6 +71,9 @@ new #[Title('Borrower')] class extends Component
             $this->fill([
                 'full_name' => $borrower->full_name,
                 'address' => $borrower->address,
+                'state' => (string) $borrower->state,
+                'pincode' => (string) $borrower->pincode,
+                'occupation' => (string) $borrower->occupation,
                 'mobile' => $borrower->mobile,
                 'alternate_mobile' => (string) $borrower->alternate_mobile,
                 'emergency_contact_name' => $borrower->emergency_contact_name,
@@ -71,6 +84,10 @@ new #[Title('Borrower')] class extends Component
                 'status' => $borrower->status->value,
                 'notes' => (string) $borrower->notes,
             ]);
+
+            $this->also_add_as_guarantor = Guarantor::query()
+                ->where('borrower_id', $borrower->getKey())
+                ->exists();
         }
     }
 
@@ -110,6 +127,9 @@ new #[Title('Borrower')] class extends Component
         $rules = [
             'full_name' => ['required', 'string', 'min:2', 'max:255'],
             'address' => ['required', 'string', 'min:5', 'max:1000'],
+            'state' => ['nullable', 'string', 'min:2', 'max:100'],
+            'pincode' => ['nullable', 'regex:/^[1-9][0-9]{5}$/'],
+            'occupation' => ['nullable', 'string', 'max:100'],
             'mobile' => ['required', 'digits:10', Rule::unique('borrowers', 'mobile')->ignore($this->borrower?->id)],
             'alternate_mobile' => ['nullable', 'digits:10', 'different:mobile'],
             'emergency_contact_name' => ['required', 'string', 'min:2', 'max:255'],
@@ -134,12 +154,21 @@ new #[Title('Borrower')] class extends Component
     {
         $this->full_name = trim($this->full_name);
         $this->address = trim($this->address);
+        $this->state = trim($this->state);
+        $this->pincode = preg_replace('/\D/', '', $this->pincode) ?? '';
+        $this->occupation = trim($this->occupation);
         $this->emergency_contact_name = trim($this->emergency_contact_name);
         $this->mobile = preg_replace('/\D/', '', $this->mobile) ?? '';
         $this->alternate_mobile = preg_replace('/\D/', '', $this->alternate_mobile) ?? '';
         $this->emergency_contact_number = preg_replace('/\D/', '', $this->emergency_contact_number) ?? '';
 
         $validated = $this->validate();
+
+        foreach (['state', 'pincode', 'occupation'] as $field) {
+            if (($validated[$field] ?? null) === '') {
+                $validated[$field] = null;
+            }
+        }
 
         $borrower = DB::transaction(function () use ($validated): Borrower {
             $borrower = $this->borrower ?? new Borrower;
@@ -157,10 +186,16 @@ new #[Title('Borrower')] class extends Component
                 $this->storeDocument($borrower, $this->{$slot['property']}, $type, $slot['property']);
             }
 
+            app(GuarantorService::class)->syncBorrowerGuarantor($borrower, $this->also_add_as_guarantor, auth()->user());
+
             return $borrower;
         });
 
-        Flux::toast(variant: 'success', text: __('Borrower saved successfully.'));
+        $message = $this->also_add_as_guarantor
+            ? __('Borrower saved and registered as a guarantor.')
+            : __('Borrower saved successfully.');
+
+        Flux::toast(variant: 'success', text: $message);
 
         $this->redirectRoute('borrowers.show', $borrower, navigate: true);
     }
@@ -235,7 +270,13 @@ new #[Title('Borrower')] class extends Component
                 </flux:select>
 
                 <div class="sm:col-span-2">
-                    <flux:textarea wire:model="address" :label="__('Complete address')" rows="3" placeholder="House, street, city, state, PIN" required minlength="5" maxlength="1000" />
+                    <flux:textarea wire:model="address" :label="__('Complete address')" rows="3" placeholder="House, street, area" required minlength="5" maxlength="1000" />
+                </div>
+
+                <flux:input wire:model="state" :label="__('State')" placeholder="State" maxlength="100" />
+                <flux:input wire:model="pincode" :label="__('PIN code')" placeholder="6-digit PIN" inputmode="numeric" maxlength="6" />
+                <div class="sm:col-span-2">
+                    <flux:input wire:model="occupation" :label="__('Occupation')" placeholder="Occupation (optional)" maxlength="100" />
                 </div>
             </div>
         </div>
@@ -258,6 +299,16 @@ new #[Title('Borrower')] class extends Component
                 <flux:input wire:model="bank_account_number" :label="__('Account number')" maxlength="40" />
                 <flux:input wire:model="bank_ifsc" :label="__('IFSC code')" maxlength="20" />
             </div>
+        </div>
+
+        <div class="fc-card p-5 sm:p-6">
+            <label class="flex items-start gap-3">
+                <input type="checkbox" wire:model="also_add_as_guarantor" class="mt-1 rounded border-slate-300 text-navy-900 focus:ring-navy-900/20">
+                <span>
+                    <span class="block text-sm font-semibold text-slate-900">{{ __('Also Add as Guarantor') }}</span>
+                    <span class="mt-0.5 block text-xs text-slate-400">{{ __('Register this borrower as a guarantor using their existing details. No extra information is required.') }}</span>
+                </span>
+            </label>
         </div>
 
         <div class="fc-card p-5 sm:p-6">

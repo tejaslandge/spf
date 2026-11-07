@@ -1,7 +1,6 @@
 <?php
 
 use App\Http\Controllers\Settings\GeneralSettingsController;
-use App\Http\Controllers\Settings\PasswordController;
 use App\Http\Controllers\Settings\ProfileController;
 use Illuminate\Support\Facades\Route;
 
@@ -11,17 +10,9 @@ Route::middleware(['auth'])->group(function () {
     Route::livewire('settings/profile', 'pages::settings.profile')->name('profile.edit');
     Route::get('settings/profile/avatar', [ProfileController::class, 'avatar'])->name('profile.avatar');
 
-    Route::put('settings/password', [PasswordController::class, 'update'])
-        ->middleware('throttle:password-update')
-        ->name('security.password.update');
-
     Route::livewire('settings/notifications', 'pages::settings.notifications')->name('settings.notifications');
     Route::livewire('settings/preferences', 'pages::settings.preferences')->name('settings.preferences');
-});
 
-Route::middleware(['auth', 'verified'])->group(function () {
-    // Password confirmation is handled inline inside the Livewire component so
-    // the settings layout and URL stay exactly where the user already is.
     Route::livewire('settings/security', 'pages::settings.security')
         ->name('security.edit');
 });
@@ -62,10 +53,3 @@ Route::middleware(['auth'])->prefix('super-admin')->name('super-admin.')->group(
 Route::middleware(['auth', 'role:admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::livewire('settings', 'pages::settings.index')->name('settings');
 });
-
-Route::get('.well-known/passkey-endpoints', function () {
-    return response()->json([
-        'enroll' => route('security.edit'),
-        'manage' => route('security.edit'),
-    ]);
-})->name('well-known.passkeys');

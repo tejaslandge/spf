@@ -16,6 +16,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 #[Fillable([
+    'borrower_id',
     'full_name',
     'address',
     'mobile_number',
@@ -53,7 +54,9 @@ class Guarantor extends Model
 
     public function loans(): BelongsToMany
     {
-        return $this->belongsToMany(Loan::class, 'loan_guarantors')->withTimestamps();
+        return $this->belongsToMany(Loan::class, 'loan_guarantors')
+            ->withPivot(['relationship', 'custom_relationship'])
+            ->withTimestamps();
     }
 
     public function createdBy(): BelongsTo
@@ -64,6 +67,11 @@ class Guarantor extends Model
     public function updatedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'updated_by');
+    }
+
+    public function borrower(): BelongsTo
+    {
+        return $this->belongsTo(Borrower::class);
     }
 
     public function scopeSearch(Builder $query, ?string $term): Builder

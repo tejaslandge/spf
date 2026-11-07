@@ -2,6 +2,7 @@
 
 use App\Enums\InterestMethod;
 use App\Models\Borrower;
+use App\Models\Guarantor;
 use App\Services\GuarantorService;
 use App\Services\LoanService;
 use App\Services\Settings\SettingsService;
@@ -37,8 +38,18 @@ new #[Title('New loan')] class extends Component
 
     public string $employment_details = '';
 
-    /** @var array<int, array<string, mixed>> */
-    public array $guarantors = [];
+    /** @var array<int, int> */
+    public array $selectedGuarantorIds = [];
+
+    /** @var array<int|string, array{relationship: string, custom_relationship: string}> */
+    public array $selectedGuarantorRelationships = [];
+
+    public string $guarantorSearch = '';
+
+    public bool $showNewGuarantorModal = false;
+
+    /** @var array<string, mixed> */
+    public array $newGuarantor = [];
 
     public string $notes = '';
 
@@ -51,9 +62,9 @@ new #[Title('New loan')] class extends Component
 
         $this->borrower_id = (string) ($request->query('borrower') ?? '');
         $this->first_emi_date = now()->addMonthNoOverflow()->format('Y-m-d');
-        $this->guarantors = [GuarantorService::blankRow()];
+        $this->newGuarantor = GuarantorService::blankRow();
 
-        $this->monthly_interest_rate = $settings->getDecimal('loan.default_monthly_rate', '1.5');
+        $this->monthly_interest_rate = $settings->getDecimal('loan.default_monthly_rate', '4');
         $this->interest_method = $settings->get('loan.default_interest_method', 'flat');
         $this->tenureOptions = array_map('intval', $settings->getJson('loan.tenure_options', [6, 12, 18, 24, 36]));
 
@@ -115,21 +126,6 @@ new #[Title('New loan')] class extends Component
         $this->annual_interest_rate = rtrim(rtrim(number_format($annual, 4), '0'), '.');
     }
 
-    public function addGuarantorRow(): void
-    {
-        if (count($this->guarantors) >= 10) {
-            return;
-        }
-
-        $this->guarantors[] = GuarantorService::blankRow();
-    }
-
-    public function removeGuarantorRow(int $index): void
-    {
-        unset($this->guarantors[$index]);
-        $this->guarantors = array_values($this->guarantors);
-    }
-
     /**
      * @return array<int, Borrower>
      */
@@ -137,6 +133,108 @@ new #[Title('New loan')] class extends Component
     public function borrowers()
     {
         return Borrower::query()->active()->orderBy('full_name')->get();
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, Guarantor>
+     */
+    #[Computed]
+    public function guarantorOptions()
+    {
+        $query = Guarantor::query()->orderBy('full_name');
+
+        if ($this->guarantorSearch !== '') {
+            $query->search($this->guarantorSearch);
+        }
+
+        return $query->limit(50)->get();
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, Guarantor>
+     */
+    #[Computed]
+    public function selectedGuarantors()
+    {
+        if ($this->selectedGuarantorIds === []) {
+            return collect();
+        }
+
+        return Guarantor::query()
+            ->whereIn('id', $this->selectedGuarantorIds)
+            ->get()
+            ->sortBy(fn (Guarantor $guarantor) => array_search($guarantor->id, $this->selectedGuarantorIds, true))
+            ->values();
+    }
+
+    public function toggleGuarantor(int $guarantorId): void
+    {
+        if (in_array($guarantorId, $this->selectedGuarantorIds, true)) {
+            $this->selectedGuarantorIds = array_values(array_filter(
+                $this->selectedGuarantorIds,
+                fn (int $id): bool => $id !== $guarantorId,
+            ));
+            unset($this->selectedGuarantorRelationships[$guarantorId]);
+        } else {
+            $this->selectedGuarantorIds[] = $guarantorId;
+            $this->selectedGuarantorRelationships[$guarantorId] = ['relationship' => '', 'custom_relationship' => ''];
+        }
+
+        unset($this->selectedGuarantors);
+    }
+
+    public function removeSelectedGuarantor(int $guarantorId): void
+    {
+        $this->selectedGuarantorIds = array_values(array_filter(
+            $this->selectedGuarantorIds,
+            fn (int $id): bool => $id !== $guarantorId,
+        ));
+        unset($this->selectedGuarantorRelationships[$guarantorId]);
+
+        unset($this->selectedGuarantors);
+    }
+
+    public function openNewGuarantorModal(): void
+    {
+        $this->newGuarantor = GuarantorService::blankRow();
+        $this->resetValidation(['newGuarantor.*']);
+        $this->showNewGuarantorModal = true;
+    }
+
+    public function saveNewGuarantor(): void
+    {
+        $this->newGuarantor = GuarantorService::normalize($this->newGuarantor);
+
+        $validated = $this->validate(GuarantorService::rules('newGuarantor'));
+        $data = $validated['newGuarantor'];
+
+        $borrower = filled($this->borrower_id) ? Borrower::query()->find($this->borrower_id) : null;
+
+        if ($borrower !== null && $borrower->mobile === $data['mobile_number']) {
+            $this->addError('newGuarantor.mobile_number', __('A guarantor mobile number cannot match the borrower mobile number.'));
+
+            return;
+        }
+
+        $pivot = GuarantorService::pivotRelationship($data);
+        unset($data['relationship'], $data['custom_relationship']);
+
+        $guarantor = app(GuarantorService::class)->createStandalone($data, auth()->user());
+
+        if (! in_array($guarantor->id, $this->selectedGuarantorIds, true)) {
+            $this->selectedGuarantorIds[] = $guarantor->id;
+        }
+        $this->selectedGuarantorRelationships[$guarantor->id] = [
+            'relationship' => (string) ($pivot['relationship'] ?? ''),
+            'custom_relationship' => (string) ($pivot['custom_relationship'] ?? ''),
+        ];
+
+        $this->showNewGuarantorModal = false;
+        $this->newGuarantor = GuarantorService::blankRow();
+        $this->guarantorSearch = '';
+        unset($this->selectedGuarantors, $this->guarantorOptions);
+
+        Flux::toast(variant: 'success', text: __('Guarantor saved and selected for this loan.'));
     }
 
     #[Computed]
@@ -158,24 +256,15 @@ new #[Title('New loan')] class extends Component
                 $this->interest_method,
                 $this->first_emi_date ?: now()->addMonthNoOverflow()->format('Y-m-d'),
             );
-        } catch (\Throwable) {
+        } catch (\Throwable $throwable) {
+            report($throwable);
+
             return null;
         }
     }
 
     public function save(): void
     {
-        $populated = [];
-
-        foreach ($this->guarantors as $index => $row) {
-            $normalized = GuarantorService::normalize($row);
-            $this->guarantors[$index] = $normalized;
-
-            if (GuarantorService::hasAnyValue($normalized)) {
-                $populated[$index] = $normalized;
-            }
-        }
-
         $limits = $this->loanLimits;
 
         $rules = [
@@ -194,37 +283,54 @@ new #[Title('New loan')] class extends Component
             'purpose' => ['nullable', 'string', 'max:255'],
             'monthly_income' => ['nullable', 'numeric', 'min:0', 'max:100000000'],
             'employment_details' => ['nullable', 'string', 'max:255'],
-            'guarantors' => ['array', 'max:10'],
+            'selectedGuarantorIds' => ['required', 'array', 'min:1', 'max:10'],
+            'selectedGuarantorIds.*' => ['integer', Rule::exists('guarantors', 'id')],
             'notes' => ['nullable', 'string', 'max:2000'],
         ];
 
-        foreach (array_keys($populated) as $index) {
-            $rules += GuarantorService::rules('guarantors.'.$index);
+        foreach ($this->selectedGuarantorIds as $id) {
+            $rules['selectedGuarantorRelationships.'.$id.'.relationship'] = ['required', Rule::enum(\App\Enums\RelationshipType::class)];
+            $rules['selectedGuarantorRelationships.'.$id.'.custom_relationship'] = [
+                'nullable',
+                'string',
+                'max:100',
+                'required_if:selectedGuarantorRelationships.'.$id.'.relationship,'.App\Enums\RelationshipType::Other->value,
+            ];
         }
 
         $validated = $this->validate($rules);
 
-        $guarantorMobiles = array_values(array_filter(array_column($populated, 'mobile_number')));
+        $selectedIds = array_values(array_unique(array_map('intval', $this->selectedGuarantorIds)));
+        $selections = [];
 
-        if (count($guarantorMobiles) !== count(array_unique($guarantorMobiles))) {
-            $this->addError('guarantors', __('Each guarantor must have a different mobile number.'));
-
-            return;
+        foreach ($selectedIds as $id) {
+            $relationship = $this->selectedGuarantorRelationships[$id] ?? [];
+            $selections[] = [
+                'guarantor_id' => $id,
+                'relationship' => $relationship['relationship'] ?? null,
+                'custom_relationship' => ($relationship['relationship'] ?? null) === \App\Enums\RelationshipType::Other->value
+                    ? ($relationship['custom_relationship'] ?? null)
+                    : null,
+            ];
         }
 
-        $borrower = Borrower::query()->find($this->borrower_id);
+        if ($selectedIds !== []) {
+            $borrower = Borrower::query()->find($this->borrower_id);
+            $conflicting = Guarantor::query()
+                ->whereIn('id', $selectedIds)
+                ->when($borrower !== null, fn ($query) => $query->where('mobile_number', $borrower->mobile))
+                ->exists();
 
-        if ($borrower !== null && in_array($borrower->mobile, $guarantorMobiles, true)) {
-            $this->addError('guarantors', __('A guarantor mobile number cannot match the borrower mobile number.'));
+            if ($conflicting) {
+                $this->addError('selectedGuarantorIds', __('A selected guarantor mobile number cannot match the borrower mobile number.'));
 
-            return;
+                return;
+            }
         }
 
-        $service = app(LoanService::class);
-
-        $loan = $service->create([
+        $loan = app(LoanService::class)->create([
             ...$validated,
-            'guarantors' => array_values($populated),
+            'guarantor_selections' => $selections,
             'emi_frequency' => 'monthly',
         ], auth()->user());
 
@@ -260,8 +366,9 @@ new #[Title('New loan')] class extends Component
                     <flux:input wire:model.live.debounce.400ms="principal_amount" :label="__('Principal amount (₹)')" type="number" step="0.01" min="{{ $this->loanLimits['minAmount'] }}" max="{{ $this->loanLimits['maxAmount'] }}" placeholder="100000" required />
                     <flux:input wire:model.live.debounce.400ms="monthly_interest_rate" :label="__('Monthly interest rate (%)')" type="number" step="0.01" min="{{ $this->loanLimits['minRate'] }}" max="{{ $this->loanLimits['maxRate'] }}" placeholder="1" required />
                     @error('monthly_interest_rate') <p class="-mt-2 text-xs text-rose-600 sm:col-span-2">{{ $message }}</p> @enderror
-                    <flux:input wire:model="annual_interest_rate" :label="__('Annual interest rate (%)')" type="number" step="0.01" readonly placeholder="= Monthly × 12" />
-                    <p class="-mt-2 text-[11px] text-slate-400 sm:col-span-2">{{ __('Annual rate is auto-calculated as monthly rate × 12.') }}</p>
+                    <flux:input wire:model.live.debounce.400ms="annual_interest_rate" :label="__('Annual interest rate (%)')" type="number" step="0.01" min="0" placeholder="48" required />
+                    @error('annual_interest_rate') <p class="-mt-2 text-xs text-rose-600 sm:col-span-2">{{ $message }}</p> @enderror
+                    <p class="-mt-2 text-[11px] text-slate-400 sm:col-span-2">{{ __('Linked to monthly rate (× 12) — edit either field.') }}</p>
                     <div>
                         <flux:input wire:model.live.debounce.400ms="tenure_months" :label="__('Tenure (months)')" type="number" min="{{ $this->loanLimits['minTenure'] }}" max="{{ $this->loanLimits['maxTenure'] }}" required />
                         @if (count($tenureOptions) > 0)
@@ -308,25 +415,84 @@ new #[Title('New loan')] class extends Component
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div>
                         <h3 class="text-sm font-semibold">{{ __('Guarantor details') }}</h3>
-                        <p class="mt-0.5 text-[11px] text-slate-400">{{ __('Optional. Add a person who guarantees or supports this loan.') }}</p>
+                        <p class="mt-0.5 text-[11px] text-slate-400">{{ __('Required. Select at least one guarantor or add a new guarantor for this loan application.') }}</p>
                     </div>
 
-                    <button type="button" wire:click="addGuarantorRow" class="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900">
+                    <button type="button" wire:click="openNewGuarantorModal" class="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900">
                         <flux:icon.plus class="size-3.5" />
-                        {{ __('Add guarantor') }}
+                        {{ __('Add New Guarantor') }}
                     </button>
                 </div>
 
-                @error('guarantors') <p class="mt-3 text-xs text-rose-600">{{ $message }}</p> @enderror
+                @error('selectedGuarantorIds') <p class="mt-3 text-xs text-rose-600">{{ $message }}</p> @enderror
 
-                <div class="mt-4 space-y-3">
-                    @forelse ($guarantors as $index => $guarantorRow)
-                        <div wire:key="guarantor-row-{{ $index }}">
-                            <x-guarantor-fields model="guarantors.{{ $index }}" :row="$guarantorRow" :index="$index" :removable="count($guarantors) > 1" />
-                        </div>
-                    @empty
-                        <p class="rounded-xl border border-dashed border-slate-200 px-3 py-6 text-center text-xs text-slate-400">{{ __('No guarantor added. This section is optional.') }}</p>
-                    @endforelse
+                @if ($this->selectedGuarantors->isNotEmpty())
+                    <div class="mt-4 space-y-3">
+                        <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{{ __('Selected guarantors') }}</p>
+                        @foreach ($this->selectedGuarantors as $selected)
+                            @php($rel = $selectedGuarantorRelationships[$selected->id]['relationship'] ?? '')
+                            <div wire:key="selected-guarantor-{{ $selected->id }}" class="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3">
+                                <div class="flex items-start justify-between gap-3">
+                                    <div class="min-w-0">
+                                        <p class="truncate text-sm font-semibold text-slate-800">{{ $selected->full_name }}</p>
+                                        <p class="text-[11px] text-slate-500">{{ $selected->mobile_number }} · {{ collect([$selected->city, $selected->state])->filter()->implode(', ') ?: __('Location not set') }}</p>
+                                    </div>
+                                    <button type="button" wire:click="removeSelectedGuarantor({{ $selected->id }})" class="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-rose-200 hover:text-rose-600">{{ __('Remove') }}</button>
+                                </div>
+                                <div class="mt-3 grid gap-3 sm:grid-cols-2">
+                                    <div>
+                                        <label class="block text-[11px] font-semibold text-slate-600">{{ __('Relationship for this loan') }}</label>
+                                        <select wire:model.live="selectedGuarantorRelationships.{{ $selected->id }}.relationship" class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+                                            <option value="">{{ __('Select relationship') }}</option>
+                                            @foreach (\App\Enums\RelationshipType::options() as $value => $label)
+                                                <option value="{{ $value }}">{{ $label }}</option>
+                                            @endforeach
+                                        </select>
+                                        @error('selectedGuarantorRelationships.'.$selected->id.'.relationship') <p class="mt-1 text-xs text-rose-600">{{ $message }}</p> @enderror
+                                    </div>
+                                    @if (($selectedGuarantorRelationships[$selected->id]['relationship'] ?? '') === \App\Enums\RelationshipType::Other->value)
+                                        <div>
+                                            <label class="block text-[11px] font-semibold text-slate-600">{{ __('Custom relationship') }}</label>
+                                            <input type="text" wire:model="selectedGuarantorRelationships.{{ $selected->id }}.custom_relationship" maxlength="100" class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+                                            @error('selectedGuarantorRelationships.'.$selected->id.'.custom_relationship') <p class="mt-1 text-xs text-rose-600">{{ $message }}</p> @enderror
+                                        </div>
+                                    @endif
+                                </div>
+                            </div>
+                        @endforeach
+                    </div>
+                @endif
+
+                <div class="mt-4 rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
+                    <p class="text-xs font-semibold text-slate-700">{{ __('Select Guarantor') }}</p>
+                    <p class="mt-0.5 text-[11px] text-slate-400">{{ __('Search and select one or more existing guarantors.') }}</p>
+
+                    <div class="relative mt-3">
+                        <flux:icon.magnifying-glass class="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                        <input
+                            type="search"
+                            wire:model.live.debounce.300ms="guarantorSearch"
+                            placeholder="{{ __('Search guarantor name or mobile…') }}"
+                            class="w-full rounded-xl border border-slate-200 bg-white py-2.5 pe-3 ps-9 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                        >
+                    </div>
+
+                    <div class="mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
+                        @forelse ($this->guarantorOptions as $option)
+                            @php($isSelected = in_array($option->id, $selectedGuarantorIds, true))
+                            <label wire:key="guarantor-option-{{ $option->id }}" class="flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-2.5 transition {{ $isSelected ? 'border-navy-900 bg-navy-900/5' : 'border-slate-200 bg-white hover:border-slate-300' }}">
+                                <input type="checkbox" wire:click="toggleGuarantor({{ $option->id }})" @checked($isSelected) class="mt-1 rounded border-slate-300 text-navy-900 focus:ring-navy-900/20">
+                                <span class="min-w-0">
+                                    <span class="block text-sm font-medium text-slate-800">{{ $option->full_name }}</span>
+                                    <span class="block text-[11px] text-slate-500">{{ $option->mobile_number }} · {{ collect([$option->city, $option->state])->filter()->implode(', ') ?: '—' }}</span>
+                                </span>
+                            </label>
+                        @empty
+                            <p class="rounded-xl border border-dashed border-slate-200 bg-white px-3 py-6 text-center text-xs text-slate-400">
+                                {{ $guarantorSearch !== '' ? __('No guarantors match your search.') : __('No guarantors found. Add a new guarantor for this loan.') }}
+                            </p>
+                        @endforelse
+                    </div>
                 </div>
             </div>
 
@@ -382,4 +548,31 @@ new #[Title('New loan')] class extends Component
             </div>
         </div>
     </form>
+
+    @if ($showNewGuarantorModal)
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" wire:click="$set('showNewGuarantorModal', false)"></div>
+
+            <div class="relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
+                <div class="flex items-start justify-between">
+                    <div>
+                        <h3 class="text-base font-semibold">{{ __('Add New Guarantor') }}</h3>
+                        <p class="mt-0.5 text-xs text-slate-400">{{ __('Save this guarantor and select it for the current loan application.') }}</p>
+                    </div>
+                    <button type="button" wire:click="$set('showNewGuarantorModal', false)" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100">
+                        <flux:icon.x-mark class="size-4" />
+                    </button>
+                </div>
+
+                <form wire:submit="saveNewGuarantor" class="mt-4">
+                    <x-guarantor-fields model="newGuarantor" :row="$newGuarantor" :index="0" />
+
+                    <div class="mt-4 flex items-center justify-end gap-2">
+                        <button type="button" wire:click="$set('showNewGuarantorModal', false)" class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">{{ __('Cancel') }}</button>
+                        <flux:button type="submit" variant="primary" class="!rounded-xl">{{ __('Save & select guarantor') }}</flux:button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    @endif
 </div>

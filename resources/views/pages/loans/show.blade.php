@@ -3,10 +3,13 @@
 use App\Enums\LoanFundingStatus;
 use App\Enums\LoanStatus;
 use App\Enums\PaymentMethod;
+use App\Enums\Permission;
 use App\Models\Guarantor;
 use App\Models\Loan;
 use App\Models\LoanOffer;
 use App\Services\EmiCollectionService;
+use App\Services\ForeclosureCalculation;
+use App\Services\ForeclosureService;
 use App\Services\GuarantorService;
 use App\Services\LoanFundingService;
 use App\Services\LoanOfferService;
@@ -40,6 +43,14 @@ new #[Title('Loan details')] class extends Component
     public bool $showGuarantorModal = false;
 
     public ?int $editingGuarantorId = null;
+
+    public string $guarantorFormMode = 'add';
+
+    public bool $showForeclosureModal = false;
+
+    public string $foreclosure_effective_date = '';
+
+    public bool $waiveAccruedInterest = false;
 
     /** @var array<string, mixed> */
     public array $guarantorForm = [];
@@ -181,7 +192,9 @@ new #[Title('Loan details')] class extends Component
         $this->authorizeGuarantorManagement();
 
         $this->editingGuarantorId = null;
+        $this->guarantorFormMode = 'add';
         $this->guarantorForm = GuarantorService::blankRow();
+        $this->resetValidation(['guarantorForm.*']);
         $this->showGuarantorModal = true;
     }
 
@@ -192,22 +205,13 @@ new #[Title('Loan details')] class extends Component
         $guarantor = $this->loan->guarantors()->findOrFail($guarantorId);
 
         $this->editingGuarantorId = $guarantor->getKey();
+        $this->guarantorFormMode = 'relationship';
         $this->guarantorForm = [
             'id' => $guarantor->getKey(),
-            'full_name' => $guarantor->full_name,
-            'mobile_number' => $guarantor->mobile_number,
-            'alternate_mobile' => (string) $guarantor->alternate_mobile,
-            'email' => (string) $guarantor->email,
-            'address' => $guarantor->address,
-            'city' => (string) $guarantor->city,
-            'state' => (string) $guarantor->state,
-            'pincode' => (string) $guarantor->pincode,
-            'relationship' => $guarantor->relationship?->value ?? '',
-            'custom_relationship' => (string) $guarantor->custom_relationship,
-            'occupation' => (string) $guarantor->occupation,
-            'identity_document_type' => $guarantor->identity_document_type?->value ?? '',
-            'identity_document_number' => (string) $guarantor->identity_document_number,
+            'relationship' => $guarantor->pivot?->relationship ?? '',
+            'custom_relationship' => (string) ($guarantor->pivot?->custom_relationship ?? ''),
         ];
+        $this->resetValidation(['guarantorForm.*']);
         $this->showGuarantorModal = true;
     }
 
@@ -216,40 +220,40 @@ new #[Title('Loan details')] class extends Component
         $this->authorizeGuarantorManagement();
 
         $this->guarantorForm = GuarantorService::normalize($this->guarantorForm);
-
-        $validated = $this->validate(GuarantorService::rules('guarantorForm'));
-        $data = $validated['guarantorForm'];
-
-        if ($data['mobile_number'] === $this->loan->borrower->mobile) {
-            $this->addError('guarantorForm.mobile_number', __('A guarantor mobile number cannot match the borrower mobile number.'));
-
-            return;
-        }
-
-        $duplicate = $this->loan->guarantors()
-            ->where('mobile_number', $data['mobile_number'])
-            ->when($this->editingGuarantorId !== null, fn ($query) => $query->where('guarantors.id', '!=', $this->editingGuarantorId))
-            ->exists();
-
-        if ($duplicate) {
-            $this->addError('guarantorForm.mobile_number', __('This mobile number is already used by another guarantor on this loan.'));
-
-            return;
-        }
-
         $service = app(GuarantorService::class);
 
-        if ($this->editingGuarantorId !== null) {
-            $guarantor = $this->loan->guarantors()->findOrFail($this->editingGuarantorId);
-            $service->update($guarantor, $data, auth()->user());
-            $message = __('Guarantor details updated.');
+        if ($this->guarantorFormMode === 'relationship' && $this->editingGuarantorId !== null) {
+            $validated = $this->validate(GuarantorService::relationshipRules('guarantorForm'));
+            $this->loan->guarantors()->findOrFail($this->editingGuarantorId);
+            $this->loan->guarantors()->updateExistingPivot($this->editingGuarantorId, GuarantorService::pivotRelationship($validated['guarantorForm']));
+            $message = __('Guarantor relationship updated for this loan.');
         } else {
+            $validated = $this->validate(GuarantorService::rules('guarantorForm'));
+            $data = $validated['guarantorForm'];
+
+            if ($data['mobile_number'] === $this->loan->borrower->mobile) {
+                $this->addError('guarantorForm.mobile_number', __('A guarantor mobile number cannot match the borrower mobile number.'));
+
+                return;
+            }
+
+            $duplicate = $this->loan->guarantors()
+                ->where('mobile_number', $data['mobile_number'])
+                ->exists();
+
+            if ($duplicate) {
+                $this->addError('guarantorForm.mobile_number', __('This mobile number is already used by another guarantor on this loan.'));
+
+                return;
+            }
+
             $service->createForLoan($this->loan, $data, auth()->user());
             $message = __('Guarantor added.');
         }
 
         $this->showGuarantorModal = false;
         $this->editingGuarantorId = null;
+        $this->guarantorFormMode = 'add';
         $this->guarantorForm = [];
         $this->refreshLoan();
 
@@ -260,8 +264,14 @@ new #[Title('Loan details')] class extends Component
     {
         $this->authorizeGuarantorManagement();
 
-        $guarantor = $this->loan->guarantors()->findOrFail($guarantorId);
-        app(GuarantorService::class)->removeFromLoan($this->loan, $guarantor);
+        try {
+            $guarantor = $this->loan->guarantors()->findOrFail($guarantorId);
+            app(GuarantorService::class)->removeFromLoan($this->loan, $guarantor);
+        } catch (\InvalidArgumentException $exception) {
+            Flux::toast(variant: 'danger', text: $exception->getMessage());
+
+            return;
+        }
 
         $this->refreshLoan();
 
@@ -307,6 +317,83 @@ new #[Title('Loan details')] class extends Component
         Flux::toast(variant: 'success', text: __('Loan closed.'));
         $this->redirectRoute('loans.show', $this->loan, navigate: true);
     }
+
+    #[Computed]
+    public function foreclosureQuote(): ForeclosureCalculation
+    {
+        $service = app(ForeclosureService::class);
+
+        return $service->calculateForeclosureAmount(
+            $this->loan,
+            $service->settingsInputs($this->normalizedForeclosureDate(), $this->waiveAccruedInterest),
+        );
+    }
+
+    public function toggleAccruedInterestWaiver(): void
+    {
+        $this->waiveAccruedInterest = ! $this->waiveAccruedInterest;
+    }
+
+    public function canRequestForeclosure(): bool
+    {
+        $user = auth()->user();
+        $latest = $this->loan->latestForeclosureRequest();
+
+        return $user !== null
+            && $user->canManageForeclosures()
+            && $this->loan->status === LoanStatus::Active
+            && ! in_array($latest?->approval_status, ['pending', 'approved'], true);
+    }
+
+    public function openForeclosureModal(): void
+    {
+        abort_unless($this->canRequestForeclosure(), 403);
+
+        $this->foreclosure_effective_date = now()->toDateString();
+        $this->waiveAccruedInterest = false;
+        $this->resetValidation();
+        $this->showForeclosureModal = true;
+    }
+
+    public function submitForeclosureRequest(): void
+    {
+        abort_unless($this->canRequestForeclosure(), 403);
+
+        $this->validate([
+            'foreclosure_effective_date' => ['required', 'date', 'before_or_equal:today'],
+        ]);
+
+        try {
+            $request = app(LoanService::class)->foreclose(
+                $this->loan,
+                auth()->user(),
+                $this->foreclosure_effective_date,
+                $this->waiveAccruedInterest,
+            );
+        } catch (\InvalidArgumentException $exception) {
+            $this->addError('foreclosure_effective_date', $exception->getMessage());
+
+            return;
+        }
+
+        $this->showForeclosureModal = false;
+        $this->refreshLoan();
+
+        Flux::toast(variant: 'success', text: __('Foreclosure request #:id submitted for approval.', ['id' => $request->id]));
+
+        $this->redirectRoute('foreclosure.requests', navigate: true);
+    }
+
+    private function normalizedForeclosureDate(): string
+    {
+        $value = $this->foreclosure_effective_date;
+
+        if ($value === '' || ! strtotime($value) || $value > now()->toDateString()) {
+            return now()->toDateString();
+        }
+
+        return $value;
+    }
 };
 ?>
 
@@ -329,6 +416,15 @@ new #[Title('Loan details')] class extends Component
                     <a href="{{ route('borrowers.show', $loan->borrower) }}" class="font-medium text-blue-600 hover:text-blue-700">{{ $loan->borrower->full_name }}</a>
                     · {{ $loan->borrower->mobile }} · {{ $loan->interest_method->label() }}
                 </p>
+                @php
+                    $latestForeclosure = $loan->latestForeclosureRequest();
+                @endphp
+                @if ($latestForeclosure !== null && in_array($latestForeclosure->approval_status, ['pending', 'approved'], true))
+                    <p class="mt-1 text-xs font-medium text-amber-600">
+                        {{ __('Foreclosure request #:id is :status.', ['id' => $latestForeclosure->id, 'status' => strtolower($latestForeclosure->approval_status)]) }}
+                        <a href="{{ route('foreclosure.requests') }}" wire:navigate class="font-semibold underline hover:text-amber-700">{{ __('Review') }}</a>
+                    </p>
+                @endif
             </div>
 
             <div class="flex flex-wrap items-center gap-2">
@@ -361,6 +457,12 @@ new #[Title('Loan details')] class extends Component
                         <flux:icon.receipt-percent class="size-4" />
                         {{ __('Record EMI') }}
                     </button>
+                    @if ($this->canRequestForeclosure())
+                        <button type="button" wire:click="openForeclosureModal" class="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-rose-600 shadow-sm transition hover:border-rose-300 hover:text-rose-700">
+                            <flux:icon.x-circle class="size-4" />
+                            {{ __('Foreclosure') }}
+                        </button>
+                    @endif
                     <button type="button" wire:click="close" wire:confirm="{{ __('Close this loan? Outstanding principal must be zero.') }}" class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900">
                         <flux:icon.lock-closed class="size-4" />
                         {{ __('Close loan') }}
@@ -652,29 +754,38 @@ new #[Title('Loan details')] class extends Component
                         </button>
                     @endif
                 </div>
+                <p class="mt-2 text-[11px] leading-relaxed text-slate-400">{{ __('Guarantor personal details cannot be edited from this loan page. To update personal information, edit the corresponding borrower profile. Relationship is maintained for this loan only.') }}</p>
                 <div class="mt-3 space-y-3">
                     @forelse ($loan->guarantors as $guarantor)
+                        @php
+                            $pivotRelationship = \App\Services\GuarantorService::pivotRelationshipLabel($guarantor->pivot?->relationship, $guarantor->pivot?->custom_relationship);
+                        @endphp
                         <article class="rounded-2xl border border-slate-200 p-3.5">
                             <div class="flex items-start justify-between gap-3">
                                 <div class="flex min-w-0 items-center gap-2.5">
                                     <flux:avatar :name="$guarantor->full_name" :initials="str($guarantor->full_name)->substr(0, 2)" size="sm" />
                                     <div class="min-w-0">
                                         <p class="truncate text-sm font-semibold text-slate-900">{{ $guarantor->full_name }}</p>
-                                        <p class="text-[11px] text-slate-400">{{ $guarantor->relationshipLabel() }} · {{ $guarantor->mobile_number }}</p>
+                                        <p class="text-[11px] text-slate-400">{{ $pivotRelationship }} · {{ $guarantor->mobile_number }}</p>
                                     </div>
                                 </div>
-                                @if (auth()->user()?->can('manageGuarantors', $loan) && $loan->guarantorsEditable())
-                                    <button type="button" wire:click="editGuarantor({{ $guarantor->id }})" class="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:text-slate-900">{{ __('Edit') }}</button>
-                                @endif
+                                <div class="flex shrink-0 items-center gap-1.5">
+                                    @if (auth()->user()?->can('manageGuarantors', $loan) && $loan->guarantorsEditable())
+                                        <button type="button" wire:click="editGuarantor({{ $guarantor->id }})" class="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:text-slate-900">{{ __('Relationship') }}</button>
+                                    @endif
+                                    @if ($guarantor->borrower_id)
+                                        <a href="{{ route('borrowers.edit', $guarantor->borrower_id) }}" class="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:text-slate-900">{{ __('Borrower') }}</a>
+                                    @endif
+                                </div>
                             </div>
                             <dl class="mt-3 space-y-1.5 text-xs">
                                 <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Mobile') }}</dt><dd class="font-medium text-slate-700">{{ $guarantor->mobile_number }}</dd></div>
                                 <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Alternate') }}</dt><dd class="font-medium text-slate-700">{{ $guarantor->alternate_mobile ?: '—' }}</dd></div>
                                 <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Email') }}</dt><dd class="truncate font-medium text-slate-700">{{ $guarantor->email ?: '—' }}</dd></div>
-                                <div><dt class="text-slate-400">{{ __('Address') }}</dt><dd class="mt-0.5 leading-relaxed text-slate-700">{{ $guarantor->address }}, {{ $guarantor->city }}, {{ $guarantor->state }} - {{ $guarantor->pincode }}</dd></div>
+                                <div><dt class="text-slate-400">{{ __('Address') }}</dt><dd class="mt-0.5 leading-relaxed text-slate-700">{{ $guarantor->address }}@if ($guarantor->city || $guarantor->state), {{ collect([$guarantor->city, $guarantor->state])->filter()->implode(', ') }}@if ($guarantor->pincode) - {{ $guarantor->pincode }}@endif @endif</dd></div>
                                 <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Occupation') }}</dt><dd class="font-medium text-slate-700">{{ $guarantor->occupation ?: '—' }}</dd></div>
                                 <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Identity') }}</dt><dd class="font-medium text-slate-700">{{ $guarantor->identity_document_type?->label() ?? '—' }}</dd></div>
-                                <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Document number') }}</dt><dd class="break-all font-medium text-slate-700">{{ $guarantor->identity_document_number ?: '—' }}</dd></div>
+                                <div class="flex justify-between gap-3"><dt class="text-slate-400">{{ __('Document number') }}</dt><dd class="break-all font-medium text-slate-700">{{ $guarantor->maskedIdentityDocumentNumber() ?: '—' }}</dd></div>
                             </dl>
                             <div class="mt-3 flex flex-wrap gap-2">
                                 <a href="tel:{{ $guarantor->mobile_number }}" class="inline-flex items-center gap-1.5 rounded-xl bg-navy-900 px-3 py-2 text-[11px] font-semibold text-white hover:bg-navy-800"><flux:icon.phone class="size-3.5" />{{ __('Call') }}</a>
@@ -753,8 +864,45 @@ new #[Title('Loan details')] class extends Component
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div class="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" wire:click="$set('showGuarantorModal', false)"></div>
             <div class="relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
-                <div class="flex items-start justify-between"><div><h3 class="text-base font-semibold">{{ $editingGuarantorId ? __('Edit Guarantor') : __('Add Guarantor') }}</h3><p class="mt-0.5 text-xs text-slate-400">{{ $loan->loan_code }} · {{ $loan->borrower->full_name }}</p></div><button type="button" wire:click="$set('showGuarantorModal', false)" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"><flux:icon.x-mark class="size-4" /></button></div>
-                <form wire:submit="saveGuarantor" class="mt-4"><x-guarantor-fields model="guarantorForm" :row="$guarantorForm" :index="0" /><div class="mt-4 flex items-center justify-end gap-2"><button type="button" wire:click="$set('showGuarantorModal', false)" class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">{{ __('Cancel') }}</button><flux:button type="submit" variant="primary" class="!rounded-xl">{{ __('Save Guarantor') }}</flux:button></div></form>
+                <div class="flex items-start justify-between">
+                    <div>
+                        <h3 class="text-base font-semibold">{{ $guarantorFormMode === 'relationship' ? __('Relationship for this loan') : __('Add Guarantor') }}</h3>
+                        <p class="mt-0.5 text-xs text-slate-400">{{ $loan->loan_code }} · {{ $loan->borrower->full_name }}</p>
+                    </div>
+                    <button type="button" wire:click="$set('showGuarantorModal', false)" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"><flux:icon.x-mark class="size-4" /></button>
+                </div>
+
+                <form wire:submit="saveGuarantor" class="mt-4">
+                    @if ($guarantorFormMode === 'relationship')
+                        <div class="rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
+                            <p class="text-xs text-slate-500">{{ __('Personal guarantor details cannot be edited here. Update the borrower profile if this person is also a borrower.') }}</p>
+                            <div class="mt-4 grid gap-4 sm:grid-cols-2">
+                                <div>
+                                    <flux:select wire:model.live="guarantorForm.relationship" :label="__('Relationship for this loan')" required>
+                                        <option value="">{{ __('Select relationship') }}</option>
+                                        @foreach (\App\Enums\RelationshipType::options() as $value => $label)
+                                            <option value="{{ $value }}">{{ $label }}</option>
+                                        @endforeach
+                                    </flux:select>
+                                    @error('guarantorForm.relationship') <p class="mt-1 text-xs text-rose-600">{{ $message }}</p> @enderror
+                                </div>
+                                @if (($guarantorForm['relationship'] ?? '') === \App\Enums\RelationshipType::Other->value)
+                                    <div>
+                                        <flux:input wire:model="guarantorForm.custom_relationship" :label="__('Custom relationship')" maxlength="100" required />
+                                        @error('guarantorForm.custom_relationship') <p class="mt-1 text-xs text-rose-600">{{ $message }}</p> @enderror
+                                    </div>
+                                @endif
+                            </div>
+                        </div>
+                    @else
+                        <x-guarantor-fields model="guarantorForm" :row="$guarantorForm" :index="0" />
+                    @endif
+
+                    <div class="mt-4 flex items-center justify-end gap-2">
+                        <button type="button" wire:click="$set('showGuarantorModal', false)" class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">{{ __('Cancel') }}</button>
+                        <flux:button type="submit" variant="primary" class="!rounded-xl">{{ $guarantorFormMode === 'relationship' ? __('Save relationship') : __('Save Guarantor') }}</flux:button>
+                    </div>
+                </form>
             </div>
         </div>
     @endif
@@ -796,6 +944,100 @@ new #[Title('Loan details')] class extends Component
                     <div class="flex items-center justify-end gap-2 pt-1">
                         <button type="button" wire:click="$set('showCollectModal', false)" class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">{{ __('Cancel') }}</button>
                         <flux:button type="submit" variant="primary" class="!rounded-xl">{{ __('Post payment') }}</flux:button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    @endif
+
+    @if ($showForeclosureModal)
+        @php
+            $quote = $this->foreclosureQuote;
+        @endphp
+
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" wire:click="$set('showForeclosureModal', false)"></div>
+
+            <div class="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
+                <div class="flex items-start justify-between">
+                    <div>
+                        <h3 class="text-base font-semibold">{{ __('Request loan foreclosure') }}</h3>
+                        <p class="mt-0.5 text-xs text-slate-400">{{ $loan->loan_code }} · {{ $loan->borrower->full_name }}</p>
+                    </div>
+                    <button type="button" wire:click="$set('showForeclosureModal', false)" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100">
+                        <flux:icon.x-mark class="size-4" />
+                    </button>
+                </div>
+
+                <form wire:submit="submitForeclosureRequest" class="mt-4 space-y-4">
+                    <div class="rounded-xl border border-rose-100 bg-rose-50/60 p-4">
+                        <p class="text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-500">{{ __('Total foreclosure settlement') }}</p>
+                        <p class="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{{ \App\Support\Money::format($quote->total_settlement) }}</p>
+
+                        <dl class="mt-3 space-y-1.5 text-xs">
+                            <div class="flex justify-between">
+                                <dt class="text-slate-500">{{ __('Outstanding principal') }}</dt>
+                                <dd class="font-medium tabular-nums text-slate-700">{{ \App\Support\Money::format($quote->outstanding_principal) }}</dd>
+                            </div>
+                            <div class="flex items-center justify-between gap-2">
+                                <dt class="text-slate-500">{{ __('Accrued interest') }}</dt>
+                                <dd class="flex items-center gap-2">
+                                    <span @class([
+                                        'text-xs font-medium tabular-nums',
+                                        'text-slate-700' => ! $waiveAccruedInterest,
+                                        'text-slate-400 line-through' => $waiveAccruedInterest,
+                                    ])>{{ \App\Support\Money::format($quote->accrued_interest) }}</span>
+                                    <button type="button" wire:click="toggleAccruedInterestWaiver"
+                                            class="rounded-lg border px-2 py-0.5 text-[10px] font-semibold transition {{ $waiveAccruedInterest ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300' : 'border-rose-200 bg-white text-rose-600 hover:border-rose-300 hover:text-rose-700' }}">
+                                        {{ $waiveAccruedInterest ? __('+ Include interest') : __('− Accrued interest') }}
+                                    </button>
+                                </dd>
+                            </div>
+                            @if ($waiveAccruedInterest)
+                                <div class="flex justify-between text-rose-600">
+                                    <dt>{{ __('Accrued interest waived') }}</dt>
+                                    <dd class="font-medium tabular-nums">− {{ \App\Support\Money::format($quote->waived_interest) }}</dd>
+                                </div>
+                            @endif
+                            <div class="flex justify-between">
+                                <dt class="text-slate-500">{{ __('Other outstanding dues') }}</dt>
+                                <dd class="font-medium tabular-nums text-slate-700">{{ \App\Support\Money::format($quote->other_outstanding_dues) }}</dd>
+                            </div>
+                            <div class="flex justify-between">
+                                <dt class="text-slate-500">{{ __('Foreclosure charges') }}</dt>
+                                <dd class="font-medium tabular-nums text-slate-700">{{ \App\Support\Money::format($quote->foreclosure_charges) }}</dd>
+                            </div>
+                            <div class="flex justify-between">
+                                <dt class="text-slate-500">{{ __('Eligible adjustments') }}</dt>
+                                <dd class="font-medium tabular-nums text-slate-700">
+                                    @if (\App\Support\Money::compare($quote->eligible_adjustments, '0') > 0)
+                                        − {{ \App\Support\Money::format($quote->eligible_adjustments) }}
+                                    @else
+                                        {{ \App\Support\Money::format('0') }}
+                                    @endif
+                                </dd>
+                            </div>
+                        </dl>
+
+                        <p class="mt-3 border-t border-rose-100 pt-2 text-[11px] leading-relaxed text-rose-500">
+                            {{ $waiveAccruedInterest
+                                ? __('Accrued interest up to the effective date has been waived. The settlement only includes the outstanding principal, other dues and charges.')
+                                : __('Future interest is excluded. Only dues accrued up to the effective date are included.') }}
+                        </p>
+                    </div>
+
+                    <div>
+                        <flux:input wire:model.live="foreclosure_effective_date" :label="__('Foreclosure effective date')" type="date" required max="{{ now()->format('Y-m-d') }}" />
+                        @error('foreclosure_effective_date') <p class="mt-1 text-xs text-rose-600">{{ $message }}</p> @enderror
+                    </div>
+
+                    <p class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-[11px] leading-relaxed text-slate-500">
+                        {{ __('Submitting creates a pending request. An Admin or Super Admin must approve it before the loan is marked as foreclosed.') }}
+                    </p>
+
+                    <div class="flex items-center justify-end gap-2 pt-1">
+                        <button type="button" wire:click="$set('showForeclosureModal', false)" class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">{{ __('Cancel') }}</button>
+                        <flux:button type="submit" variant="danger" class="!rounded-xl">{{ __('Submit foreclosure request') }}</flux:button>
                     </div>
                 </form>
             </div>

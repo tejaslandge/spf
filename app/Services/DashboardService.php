@@ -15,6 +15,7 @@ use App\Models\Loan;
 use App\Models\User;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
 class DashboardService
@@ -50,12 +51,7 @@ class DashboardService
             'due_soon_amount' => (string) EmiSchedule::query()->unsettled()
                 ->whereBetween('due_date', [$today, $today->addDays(7)])
                 ->sum('total_amount'),
-            'upcoming' => EmiSchedule::query()
-                ->with('loan.borrower')
-                ->unsettled()
-                ->orderBy('due_date')
-                ->limit(6)
-                ->get(),
+            'upcoming' => $this->upcomingActiveLoanEmis(),
             'recent_payments' => EmiPayment::query()
                 ->with('loan.borrower')
                 ->latest('payment_date')
@@ -97,6 +93,7 @@ class DashboardService
             'pending_payouts_count' => (clone $pendingPayouts)->count(),
             'pending_payouts_amount' => (string) (clone $pendingPayouts)->sum('net_amount'),
             'team_count' => User::query()->count(),
+            'upcoming' => $this->upcomingActiveLoanEmis(),
             'collection_series' => $this->collectionSeries($months),
             'months' => $months->map(fn (CarbonImmutable $month) => $month->format('M'))->all(),
             'recent_audits' => AuditLog::query()->with('user')->latest()->limit(8)->get(),
@@ -117,6 +114,23 @@ class DashboardService
         $start = CarbonImmutable::today()->startOfMonth()->subMonths(5);
 
         return collect(range(0, 5))->map(fn (int $offset) => $start->addMonthsNoOverflow($offset));
+    }
+
+    /**
+     * Upcoming, unpaid EMI installments from the EMI schedule for Active loans only.
+     *
+     * @return \Illuminate\Database\Eloquent\Collection<int, EmiSchedule>
+     */
+    private function upcomingActiveLoanEmis(): Collection
+    {
+        return EmiSchedule::query()
+            ->with('loan.borrower')
+            ->whereHas('loan', fn (Builder $query) => $query->where('status', LoanStatus::Active))
+            ->unsettled()
+            ->whereDate('due_date', '>=', CarbonImmutable::today())
+            ->orderBy('due_date')
+            ->limit(8)
+            ->get();
     }
 
     /**

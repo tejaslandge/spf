@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -66,6 +67,18 @@ class Investor extends Model
     public function payouts(): HasMany
     {
         return $this->hasMany(InvestorPayout::class);
+    }
+
+    public function currentInterestRate(): HasOne
+    {
+        return $this->hasOne(InvestorInterestRate::class)
+            ->where('is_active', true)
+            ->whereDate('effective_from', '<=', today())
+            ->where(function (Builder $query): void {
+                $query->whereNull('effective_to')
+                    ->orWhereDate('effective_to', '>=', today());
+            })
+            ->latestOfMany(['effective_from', 'id']);
     }
 
     public function deposits(): HasMany

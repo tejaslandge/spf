@@ -287,7 +287,7 @@
                                 <flux:icon.shield-check class="size-6" />
                             </div>
                             <h2 class="mt-5 text-2xl font-semibold tracking-tight text-navy-900">{{ __('Welcome back') }}</h2>
-                            <p class="mt-2 text-sm leading-relaxed text-zinc-500">{{ __('Enter your email and password. We will then send a one-time code to your registered mobile number.') }}</p>
+                            <p class="mt-2 text-sm leading-relaxed text-zinc-500">{{ __('Enter your registered mobile number. We will send a one-time code to verify it is you.') }}</p>
                         </div>
 
                         <x-auth-session-status class="mt-4 text-center" :status="session('status')" />
@@ -307,33 +307,18 @@
                             @csrf
 
                             <flux:input
-                                name="email"
-                                :label="__('Email address')"
-                                :value="old('email')"
-                                type="email"
+                                name="mobile"
+                                :label="__('Mobile number')"
+                                :value="old('mobile')"
+                                type="tel"
+                                inputmode="numeric"
                                 required
                                 autofocus
-                                autocomplete="email"
-                                placeholder="email@example.com"
-                                icon="envelope"
+                                autocomplete="tel-national"
+                                placeholder="9876543210"
+                                maxlength="10"
+                                icon="device-phone-mobile"
                             />
-
-                            <div class="relative">
-                                <flux:input
-                                    name="password"
-                                    :label="__('Password')"
-                                    type="password"
-                                    required
-                                    autocomplete="current-password"
-                                    :placeholder="__('Password')"
-                                    viewable
-                                />
-                                @if (Route::has('password.request'))
-                                    <a href="{{ route('password.request') }}" class="absolute end-0 top-0 text-sm font-medium text-emerald-700 transition hover:text-emerald-600 hover:underline" wire:navigate>
-                                        {{ __('Forgot your password?') }}
-                                    </a>
-                                @endif
-                            </div>
 
                             <div class="flex items-center justify-between gap-4">
                                 <flux:checkbox name="remember" :label="__('Remember me')" :checked="old('remember')" />
@@ -346,13 +331,13 @@
                                 class="group relative inline-flex h-11 w-full items-center justify-center gap-2 overflow-hidden rounded-xl bg-emerald-600 text-sm font-semibold text-white shadow-lg shadow-emerald-600/25 transition hover:bg-emerald-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 active:scale-[0.99]"
                             >
                                 <span class="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 to-transparent transition duration-700 group-hover:translate-x-full"></span>
-                                <span class="relative" data-login-label>{{ __('Log in') }}</span>
+                                <span class="relative" data-login-label>{{ __('Send verification code') }}</span>
                                 <flux:icon.arrow-right class="relative size-4 transition group-hover:translate-x-0.5" />
                             </button>
 
                             <div class="flex items-center gap-2 text-[11px] text-zinc-400">
                                 <flux:icon.shield-check class="size-3.5 shrink-0 text-emerald-600" />
-                                <span>{{ __('Protected by encryption. Never share your credentials.') }}</span>
+                                <span>{{ __('Protected by encryption. Never share your verification code.') }}</span>
                             </div>
                         </form>
 
@@ -399,7 +384,7 @@
             }
 
             if (label) {
-                label.textContent = @js(__('Signing in…'));
+                label.textContent = @js(__('Sending code…'));
             }
         });
     </script>

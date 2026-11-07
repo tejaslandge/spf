@@ -18,9 +18,9 @@ new #[Title('Loan calculator')] class extends Component
 
     public string $principal_amount = '';
 
-    public string $monthly_interest_rate = '1';
+    public string $monthly_interest_rate = '4';
 
-    public string $annual_interest_rate = '12';
+    public string $annual_interest_rate = '48';
 
     public string $interest_method = 'reducing';
 

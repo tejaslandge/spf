@@ -131,6 +131,55 @@
             </div>
         </div>
 
+        <div class="fc-card overflow-hidden">
+            <div class="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+                <div>
+                    <p class="fc-eyebrow">{{ __('Schedule') }}</p>
+                    <h3 class="mt-1 text-base font-semibold">{{ __('Upcoming EMIs') }}</h3>
+                </div>
+                <a href="{{ route('collections.index') }}" class="text-xs font-semibold text-blue-600 hover:text-blue-700">{{ __('View all') }}</a>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="fc-table-head">
+                        <tr>
+                            <th class="px-5 py-3">{{ __('Borrower') }}</th>
+                            <th class="px-5 py-3">{{ __('Loan') }}</th>
+                            <th class="px-5 py-3">{{ __('Due date') }}</th>
+                            <th class="px-5 py-3 text-end">{{ __('Amount') }}</th>
+                            <th class="px-5 py-3">{{ __('Status') }}</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                        @forelse ($metrics['upcoming'] as $schedule)
+                            <tr class="transition hover:bg-slate-50/70">
+                                <td class="whitespace-nowrap px-5 py-3">
+                                    <div class="flex items-center gap-2.5">
+                                        <flux:avatar :name="$schedule->loan->borrower->full_name" :initials="str($schedule->loan->borrower->full_name)->substr(0, 1)" size="xs" />
+                                        <div class="min-w-0">
+                                            <p class="truncate font-medium text-slate-800">{{ $schedule->loan->borrower->full_name }}</p>
+                                            <p class="text-[11px] text-slate-400">{{ $schedule->loan->borrower->mobile }}</p>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="px-5 py-3">
+                                    <a href="{{ route('loans.show', $schedule->loan) }}" class="font-medium text-blue-600 hover:text-blue-700">{{ $schedule->loan->loan_code }}</a>
+                                </td>
+                                <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $schedule->due_date->format(\App\Support\Regional::dateFormat()) }}</td>
+                                <td class="whitespace-nowrap px-5 py-3 text-end font-semibold tabular-nums text-slate-800">{{ \App\Support\Money::format($schedule->total_amount) }}</td>
+                                <td class="px-5 py-3"><x-status-badge :status="$schedule->status" /></td>
+                            </tr>
+                        @empty
+                            <tr>
+                                <td colspan="5" class="px-5 py-10 text-center text-sm text-slate-400">{{ __('No upcoming EMIs for active loans.') }}</td>
+                            </tr>
+                        @endforelse
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         <div class="grid gap-4 xl:grid-cols-2">
             <div class="fc-card overflow-hidden">
                 <div class="flex items-center justify-between border-b border-slate-100 px-5 py-4">

@@ -21,6 +21,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'paid_amount',
     'outstanding_principal',
     'status',
+    'settlement_type',
     'paid_at',
 ])]
 class EmiSchedule extends Model

@@ -2,7 +2,6 @@
 
 namespace App\Policies;
 
-use App\Enums\UserRole;
 use App\Enums\LoanStatus;
 use App\Models\ForeclosureRequest;
 use App\Models\Loan;
@@ -16,7 +15,7 @@ class ForeclosurePolicy
     public function viewForecloseOption(User $user, Loan $loan): bool
     {
         return $loan->status === LoanStatus::Active
-            && !$loan->latestForeclosureRequest()?->approval_status === 'approved';
+            && $loan->latestForeclosureRequest()?->approval_status !== 'approved';
     }
 
     /**
@@ -32,8 +31,7 @@ class ForeclosurePolicy
      */
     public function viewRequest(User $user, ForeclosureRequest $request): bool
     {
-        return $user->can('manage foreclosure requests')
-            || $request->borrower_id === $user->borrower->id;
+        return $this->manageForeclosure($user);
     }
 
     /**
@@ -41,8 +39,8 @@ class ForeclosurePolicy
      */
     public function approve(User $user, ForeclosureRequest $request): bool
     {
-        return $user->isSuperAdmin()
-            || ($user->isAdmin() && $request->loan->borrower_id === $user->borrower->id);
+        return $request->approval_status === 'pending'
+            && $this->manageForeclosure($user);
     }
 
     /**
@@ -50,17 +48,18 @@ class ForeclosurePolicy
      */
     public function reject(User $user, ForeclosureRequest $request): bool
     {
-        return $user->isSuperAdmin()
-            || ($user->isAdmin() && $request->loan->borrower_id === $user->borrower->id);
+        return $request->approval_status === 'pending'
+            && $this->manageForeclosure($user);
     }
 
     /**
-     * Determine whether the user can process foreclosure payment.
+     * Determine whether the user can process a foreclosure payment.
      */
     public function processPayment(User $user, ForeclosureRequest $request): bool
     {
-        return $user->isSuperAdmin()
-            || ($user->isAdmin() && $request->loan->borrower_id === $user->borrower->id);
+        return $request->approval_status === 'approved'
+            && $request->payment_status === 'unpaid'
+            && $this->manageForeclosure($user);
     }
 
     /**
@@ -68,16 +67,11 @@ class ForeclosurePolicy
      */
     public function viewDashboard(User $user): bool
     {
-        return $user->can('manage foreclosure requests');
+        return $this->manageForeclosure($user);
     }
 
-    /**
-     * Get the policy notifications for the user.
-     *
-     * @return array<class-string, class-string>
-     */
-    public function notifications(User $user): array
+    private function manageForeclosure(User $user): bool
     {
-        return [];
+        return $user->canManageForeclosures();
     }
 }

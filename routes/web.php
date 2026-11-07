@@ -11,11 +11,11 @@ Route::view('/', 'welcome')->name('home');
 
 /*
 |--------------------------------------------------------------------------
-| Two-step authentication
+| Passwordless authentication
 |--------------------------------------------------------------------------
 |
-| These routes intentionally replace Fortify's password-only login route.
-| Nothing is authenticated until the registered mobile OTP is verified.
+| Admins and Super Admins sign in with their registered mobile number and a
+| one-time code. Nothing is authenticated until that OTP is verified.
 |
 */
 Route::middleware('guest')->group(function () {
@@ -26,11 +26,6 @@ Route::middleware('guest')->group(function () {
     Route::post('login/otp', [OtpVerificationController::class, 'verify'])->middleware('throttle:otp-verify')->name('login.otp.verify');
     Route::post('login/otp/resend', [OtpVerificationController::class, 'resend'])->middleware('throttle:otp-resend')->name('login.otp.resend');
     Route::post('login/otp/cancel', [OtpVerificationController::class, 'cancel'])->name('login.otp.cancel');
-
-    // Passkey sign-in would bypass the mandatory mobile OTP step. Passkeys stay
-    // available for step-up confirmation and management once signed in.
-    Route::get('passkeys/login/options', fn () => redirect()->route('login'))->name('passkey.login-options');
-    Route::post('passkeys/login', fn () => redirect()->route('login'))->name('passkey.login');
 });
 
 Route::middleware(['auth'])->group(function () {
@@ -56,6 +51,9 @@ Route::middleware(['auth', 'role:super_admin,admin'])->group(function () {
     Route::livewire('borrowers/{borrower}/edit', 'pages::borrowers.form')->name('borrowers.edit');
     Route::livewire('borrowers/{borrower}', 'pages::borrowers.show')->name('borrowers.show');
 
+    Route::livewire('guarantors', 'pages::guarantors.index')->name('guarantors.index');
+    Route::livewire('guarantors/{guarantor}', 'pages::guarantors.show')->name('guarantors.show');
+
     Route::livewire('loans', 'pages::loans.index')->name('loans.index');
     Route::livewire('loans/create', 'pages::loans.create')->name('loans.create');
     Route::livewire('loans/{loan}', 'pages::loans.show')->name('loans.show');
@@ -76,6 +74,7 @@ Route::middleware(['auth', 'role:super_admin,admin'])->group(function () {
     Route::livewire('company-earnings', 'pages::company-earnings.index')->name('company-earnings.index');
     Route::livewire('distribution-settings', 'pages::distribution.settings')->name('distribution.settings');
     Route::livewire('loans/{loan}/distribution', 'pages::loans.distribution')->name('loans.distribution');
+    Route::livewire('foreclosure-requests', 'pages::loans.foreclosure-requests')->name('foreclosure.requests');
 
     Route::livewire('reports', 'pages::reports.index')->name('reports.index');
 

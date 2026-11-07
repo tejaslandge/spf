@@ -74,7 +74,7 @@ new #[Title('Loan Settings')] class extends Component
         $this->minTenure = (string) $settings->getInt('loan.min_tenure_months', 1);
         $this->maxTenure = (string) $settings->getInt('loan.max_tenure_months', 360);
         $this->tenureOptions = implode(', ', $settings->getJson('loan.tenure_options', [6, 12, 18, 24, 36]));
-        $this->defaultMonthlyRate = $settings->getDecimal('loan.default_monthly_rate', '1.5');
+        $this->defaultMonthlyRate = $settings->getDecimal('loan.default_monthly_rate', '4');
         $this->minMonthlyRate = $settings->getDecimal('loan.min_monthly_rate', '0');
         $this->maxMonthlyRate = $settings->getDecimal('loan.max_monthly_rate', '5');
         $this->allowedMethods = array_values(array_intersect(

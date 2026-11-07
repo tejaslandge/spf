@@ -2,9 +2,7 @@
 
 namespace App\Models;
 
-use App\Enums\LoanStatus;
-use App\Services\ForeclosureService;
-use App\Support\AuditLogger;
+use App\Models\Concerns\Auditable;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -20,6 +18,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
     'foreclosure_charges',
     'total_settlement',
     'eligible_adjustments',
+    'waived_interest',
     'foreclosure_request_date',
     'effective_foreclosure_date',
     'approval_status',
@@ -40,11 +39,12 @@ class ForeclosureRequest extends Model
         'foreclosure_charges' => 'decimal:2',
         'total_settlement' => 'decimal:2',
         'eligible_adjustments' => 'decimal:2',
+        'waived_interest' => 'decimal:2',
         'foreclosure_request_date' => 'date',
         'effective_foreclosure_date' => 'date',
         'payment_date' => 'date',
         'actual_closure_date' => 'date',
-        'approval_status' => LoanStatus::class,
+        'approval_status' => 'string',
         'payment_status' => 'string',
     ];
 
@@ -63,27 +63,27 @@ class ForeclosureRequest extends Model
         return $this->belongsTo(User::class, 'approved_by');
     }
 
-    public function scopePending(ForeclosureRequest $query): Builder
+    public function scopePending(Builder $query): Builder
     {
         return $query->where('approval_status', 'pending');
     }
 
-    public function scopeApproved(ForeclosureRequest $query): Builder
+    public function scopeApproved(Builder $query): Builder
     {
         return $query->where('approval_status', 'approved');
     }
 
-    public function scopeRejected(ForeclosureRequest $query): Builder
+    public function scopeRejected(Builder $query): Builder
     {
         return $query->where('approval_status', 'rejected');
     }
 
-    public function scopeUnpaid(ForeclosureRequest $query): Builder
+    public function scopeUnpaid(Builder $query): Builder
     {
         return $query->where('payment_status', 'unpaid');
     }
 
-    public function scopePaid(ForeclosureRequest $query): Builder
+    public function scopePaid(Builder $query): Builder
     {
         return $query->where('payment_status', 'paid');
     }

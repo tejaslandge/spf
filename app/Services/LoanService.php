@@ -7,6 +7,7 @@ use App\Enums\InterestMethod;
 use App\Enums\LoanFundingStatus;
 use App\Enums\LoanStatus;
 use App\Enums\Permission;
+use App\Models\ForeclosureRequest;
 use App\Models\Loan;
 use App\Models\User;
 use App\Services\Notifications\StaffNotifier;
@@ -29,6 +30,7 @@ class LoanService
         private readonly GuarantorService $guarantorService,
         private readonly StaffNotifier $notifier,
         private readonly ForeclosureService $foreclosureService,
+        private readonly LoanEmiSettlementService $loanEmiSettlementService,
     ) {}
 
     /**
@@ -37,6 +39,16 @@ class LoanService
     public function create(array $data, ?User $actor = null): Loan
     {
         $this->assertTermsWithinSettings($data);
+
+        $hasGuarantor = ! empty($data['guarantor_selections'])
+            || ! empty($data['guarantor_ids'])
+            || ! empty($data['guarantors']);
+
+        if (! $hasGuarantor) {
+            throw ValidationException::withMessages([
+                'selectedGuarantorIds' => __('At least one guarantor is required for every loan.'),
+            ]);
+        }
 
         return DB::transaction(function () use ($data, $actor): Loan {
             $calculation = $this->preview(
@@ -85,7 +97,9 @@ class LoanService
                 ]);
             }
 
-            if (! empty($data['guarantor_ids'])) {
+            if (! empty($data['guarantor_selections'])) {
+                $this->guarantorService->attachSelectionsToLoan($loan, $data['guarantor_selections']);
+            } elseif (! empty($data['guarantor_ids'])) {
                 $loan->guarantors()->sync($data['guarantor_ids']);
             }
 
@@ -292,60 +306,43 @@ class LoanService
 
     public function close(Loan $loan, User $actor): Loan
     {
-        if ($loan->status !== LoanStatus::Active) {
-            throw new InvalidArgumentException('Only active loans can be closed.');
-        }
+        return DB::transaction(function () use ($loan): Loan {
+            /** @var Loan $locked */
+            $locked = Loan::query()->lockForUpdate()->findOrFail($loan->getKey());
 
-        if (Money::compare($loan->outstanding_principal, '0') > 0) {
-            throw new InvalidArgumentException('The loan still has an outstanding principal balance.');
-        }
+            if ($locked->status !== LoanStatus::Active) {
+                throw new InvalidArgumentException('Only active loans can be closed.');
+            }
 
-        $loan->forceFill([
-            'status' => LoanStatus::Closed,
-            'closed_at' => now(),
-        ])->save();
+            if (Money::compare($locked->outstanding_principal, '0') > 0) {
+                throw new InvalidArgumentException('The loan still has an outstanding principal balance.');
+            }
 
-        return $loan;
+            $locked->forceFill([
+                'status' => LoanStatus::Closed,
+                'closed_at' => now(),
+            ])->save();
+
+            $this->loanEmiSettlementService->settleRemainingUnpaidAsPaid($locked, 'loan_closure');
+
+            return $locked->refresh();
+        });
     }
 
-    public function foreclose(Loan $loan, User $actor, ?string $effectiveDate = null): ForeclosureRequest
+    public function foreclose(Loan $loan, User $actor, ?string $effectiveDate = null, bool $waiveAccruedInterest = false): ForeclosureRequest
     {
-        // Get foreclosure settings from config
-        $settings = app(SettingsService::class);
+        if ($loan->status !== LoanStatus::Active) {
+            throw new InvalidArgumentException('Only active loans can be foreclosed.');
+        }
 
-        $foreclosureChargesEnabled = $settings->getBool('loan.foreclosure_charges_enabled', false);
-        $foreclosureChargeType = $settings->get('loan.foreclosure_charge_type', 'fixed');
-        $foreclosureChargeValue = $settings->getDecimal('loan.foreclosure_charge_value', '0');
-        $foreclosureChargeMinimum = $settings->getDecimal('loan.foreclosure_charge_minimum', '0');
-        $foreclosureChargeMaximum = $settings->get('loan.foreclosure_charge_maximum', null);
-        $effectiveFrom = $settings->get('loan.foreclosure_effective_from', null);
+        $latestRequest = $loan->latestForeclosureRequest();
 
-        $inputs = [
-            'foreclosure_effective_date' => $effectiveDate ?? now()->toDateString(),
-            'foreclosure_charges_enabled' => $foreclosureChargesEnabled,
-            'foreclosure_charge_type' => $foreclosureChargeType,
-            'foreclosure_charge_value' => $foreclosureChargeValue,
-            'foreclosure_charge_minimum' => $foreclosureChargeMinimum,
-            'foreclosure_charge_maximum' => $foreclosureChargeMaximum,
-            'effective_from_date' => $effectiveFrom,
-        ];
+        if ($latestRequest !== null && in_array($latestRequest->approval_status, ['pending', 'approved'], true)) {
+            throw new InvalidArgumentException('A foreclosure request is already in progress for this loan.');
+        }
 
-        // Record the foreclosure request
-        $request = $this->foreclosureService->recordRequest($loan, $actor, $inputs);
+        $inputs = $this->foreclosureService->settingsInputs($effectiveDate, $waiveAccruedInterest);
 
-        // Calculate the foreclosure amount
-        $calculation = $this->foreclosureService->calculateForeclosureAmount($loan, $inputs);
-
-        // Update the request with the calculation results
-        $request->forceFill([
-            'outstanding_principal' => $calculation->outstanding_principal,
-            'accrued_interest' => $calculation->accrued_interest,
-            'other_outstanding_dues' => $calculation->other_outstanding_dues,
-            'foreclosure_charges' => $calculation->foreclosure_charges,
-            'total_settlement' => $calculation->total_settlement,
-            'eligible_adjustments' => $calculation->eligible_adjustments,
-        ])->save();
-
-        return $request;
+        return $this->foreclosureService->recordRequest($loan, $actor, $inputs);
     }
 }
