@@ -1,9 +1,7 @@
 <?php
 
 use App\Models\Investor;
-use App\Models\Loan;
 use Flux\Flux;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -13,17 +11,7 @@ new #[Title('Investor profile')] class extends Component
 {
     public Investor $investor;
 
-    public bool $showAllocationModal = false;
-
     public bool $showDepositModal = false;
-
-    public string $loan_id = '';
-
-    public string $principal_amount = '';
-
-    public string $allocation_date = '';
-
-    public string $notes = '';
 
     public string $deposit_amount = '';
 
@@ -77,15 +65,6 @@ new #[Title('Investor profile')] class extends Component
     public function payouts()
     {
         return $this->investor->payouts()->latest('period_month')->get();
-    }
-
-    /**
-     * @return \Illuminate\Database\Eloquent\Collection<int, Loan>
-     */
-    #[Computed]
-    public function activeLoans()
-    {
-        return Loan::query()->with('borrower')->where('status', 'active')->orderBy('loan_code')->get();
     }
 
     #[Computed]
@@ -229,77 +208,6 @@ new #[Title('Investor profile')] class extends Component
             : __('Deposit recorded.'));
     }
 
-    public function openAllocationModal(): void
-    {
-        abort_unless(app(\App\Services\Settings\SettingsService::class)->getBool('allocation.allow_manual', true), 403);
-
-        $this->reset(['loan_id', 'principal_amount', 'notes']);
-        $this->allocation_date = now()->format('Y-m-d');
-        $this->showAllocationModal = true;
-    }
-
-    public function allocate(): void
-    {
-        $settings = app(\App\Services\Settings\SettingsService::class);
-
-        abort_unless($settings->getBool('allocation.allow_manual', true), 403);
-
-        $minAllocation = $settings->getDecimal('deposit.min_allocation_amount', '0');
-        $minRule = \App\Support\Money::compare($minAllocation, '0') > 0 ? 'min:'.$minAllocation : 'min:1';
-
-        $this->validate([
-            'loan_id' => ['required', \Illuminate\Validation\Rule::exists('loans', 'id')->where('status', 'active')],
-            'principal_amount' => ['required', 'numeric', $minRule, 'max:100000000'],
-            'allocation_date' => ['required', 'date', 'before_or_equal:today'],
-            'notes' => ['nullable', 'string', 'max:1000'],
-        ]);
-
-        $loan = Loan::query()->findOrFail($this->loan_id);
-
-        if ($loan->status !== \App\Enums\LoanStatus::Active) {
-            $this->addError('loan_id', __('Only active loans can receive investor capital.'));
-
-            return;
-        }
-
-        if ($this->investor->allocations()->where('loan_id', $loan->id)->where('status', 'active')->exists()) {
-            $this->addError('loan_id', __('This investor already has an active allocation for this loan.'));
-
-            return;
-        }
-
-        $investorAvailable = app(\App\Services\LoanFundingService::class)->availableCapital($this->investor);
-
-        if (\App\Support\Money::compare($this->principal_amount, $investorAvailable) > 0) {
-            $this->addError('principal_amount', __('This exceeds the cleared capital available for allocation (:amount). Pending deposits are not available.', ['amount' => \App\Support\Money::format($investorAvailable)]));
-
-            return;
-        }
-
-        $alreadyAllocated = (string) $loan->allocations()->where('status', 'active')->sum('principal_amount');
-        $available = \App\Support\Money::sub($loan->principal_amount, $alreadyAllocated);
-
-        if (\App\Support\Money::compare($this->principal_amount, $available) > 0) {
-            $this->addError('principal_amount', __('Allocation exceeds the available principal (remaining: :amount).', ['amount' => \App\Support\Money::format($available)]));
-
-            return;
-        }
-
-        DB::transaction(function () use ($loan): void {
-            $this->investor->allocations()->create([
-                'loan_id' => $loan->id,
-                'principal_amount' => $this->principal_amount,
-                'allocation_date' => $this->allocation_date,
-                'status' => 'active',
-                'notes' => $this->notes ?: null,
-            ]);
-        });
-
-        $this->showAllocationModal = false;
-        unset($this->allocations);
-        Flux::toast(variant: 'success', text: __('Capital allocated successfully.'));
-    }
-
     public function releaseAllocation(int $allocationId): void
     {
         abort_unless(app(\App\Services\Settings\SettingsService::class)->getBool('allocation.allow_reallocation', true), 403);
@@ -342,10 +250,6 @@ new #[Title('Investor profile')] class extends Component
                 <button type="button" wire:click="openDepositModal" class="inline-flex items-center gap-2 rounded-xl border border-navy-900 bg-navy-900/5 px-3.5 py-2.5 text-xs font-semibold text-navy-900 transition hover:bg-navy-900/10">
                     <flux:icon.plus class="size-4" />
                     {{ __('Record deposit') }}
-                </button>
-                <button type="button" wire:click="openAllocationModal" class="inline-flex items-center gap-2 rounded-xl bg-navy-900 px-3.5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-navy-900/20 transition hover:bg-navy-800">
-                    <flux:icon.plus class="size-4" />
-                    {{ __('Allocate capital') }}
                 </button>
             </div>
         </div>
@@ -585,45 +489,6 @@ new #[Title('Investor profile')] class extends Component
                     <div class="flex items-center justify-end gap-2 pt-1">
                         <button type="button" wire:click="$set('showDepositModal', false)" class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">{{ __('Cancel') }}</button>
                         <flux:button type="submit" variant="primary" class="!rounded-xl">{{ __('Record deposit') }}</flux:button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    @endif
-
-    @if ($showAllocationModal)
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div class="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" wire:click="$set('showAllocationModal', false)"></div>
-
-            <div class="relative w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
-                <div class="flex items-start justify-between">
-                    <div>
-                        <h3 class="text-base font-semibold">{{ __('Allocate capital') }}</h3>
-                        <p class="mt-0.5 text-xs text-slate-400">{{ $investor->name }} · {{ $investor->investor_code }}</p>
-                    </div>
-                    <button type="button" wire:click="$set('showAllocationModal', false)" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"><flux:icon.x-mark class="size-4" /></button>
-                </div>
-
-                <form wire:submit="allocate" class="mt-4 space-y-3">
-                    <flux:select wire:model="loan_id" :label="__('Active loan')" required>
-                        <option value="">{{ __('Select a loan') }}</option>
-                        @foreach ($this->activeLoans as $loan)
-                            <option value="{{ $loan->id }}">{{ $loan->loan_code }} · {{ $loan->borrower->full_name }}</option>
-                        @endforeach
-                    </flux:select>
-                    @error('loan_id') <p class="text-xs text-rose-600">{{ $message }}</p> @enderror
-
-                    <flux:input wire:model="principal_amount" :label="__('Principal amount (₹)')" type="number" step="0.01" min="1000" max="100000000" required />
-                    @error('principal_amount') <p class="text-xs text-rose-600">{{ $message }}</p> @enderror
-
-                    <flux:input wire:model="allocation_date" :label="__('Allocation date')" type="date" required max="{{ now()->format('Y-m-d') }}" />
-                    @error('allocation_date') <p class="text-xs text-rose-600">{{ $message }}</p> @enderror
-
-                    <flux:textarea wire:model="notes" :label="__('Notes')" rows="2" maxlength="1000" />
-
-                    <div class="flex items-center justify-end gap-2 pt-1">
-                        <button type="button" wire:click="$set('showAllocationModal', false)" class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">{{ __('Cancel') }}</button>
-                        <flux:button type="submit" variant="primary" class="!rounded-xl">{{ __('Allocate') }}</flux:button>
                     </div>
                 </form>
             </div>

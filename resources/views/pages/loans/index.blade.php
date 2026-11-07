@@ -129,7 +129,13 @@ new #[Title('Loans')] class extends Component
                             <td class="whitespace-nowrap px-5 py-3 text-end tabular-nums text-slate-700">{{ \App\Support\Money::format($loan->emi_amount) }}</td>
                             <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ $loan->next_due_date ? \Illuminate\Support\Carbon::parse($loan->next_due_date)->format(\App\Support\Regional::dateFormat()) : '—' }}</td>
                             <td class="whitespace-nowrap px-5 py-3 text-end font-semibold tabular-nums text-slate-800">{{ \App\Support\Money::format($loan->outstanding_principal) }}</td>
-                            <td class="px-5 py-3"><x-status-badge :status="$loan->status" /> <x-status-badge :status="$loan->application_status" class="mt-0.5 !px-1.5 !py-0.5 !text-[9px]" /></td>
+                            <td class="px-5 py-3">
+                                @if ($loan->status === \App\Enums\LoanStatus::Rejected || $loan->application_status === \App\Enums\ApplicationStatus::Rejected)
+                                    <x-status-badge :status="\App\Enums\LoanStatus::Rejected" />
+                                @else
+                                    <x-status-badge :status="$loan->status" /> <x-status-badge :status="$loan->application_status" class="mt-0.5 !px-1.5 !py-0.5 !text-[9px]" />
+                                @endif
+                            </td>
                             <td class="px-5 py-3 text-end">
                                 <a href="{{ route('loans.show', $loan) }}" class="inline-flex rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
                                     <flux:icon.eye class="size-4" />

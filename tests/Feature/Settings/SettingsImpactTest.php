@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\DepositStatus;
+use App\Enums\LoanStatus;
 use App\Enums\Permission;
 use App\Enums\UserRole;
 use App\Models\Borrower;
@@ -18,7 +19,6 @@ use App\Services\Settings\SettingsService;
 use App\Services\Settings\UserPreferenceService;
 use App\Support\Regional;
 use Carbon\CarbonImmutable;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
@@ -193,28 +193,21 @@ test('verified kyc can be required before an investor funds a loan', function ()
         ->toThrow(InvalidArgumentException::class);
 });
 
-test('the minimum allocation amount is enforced when allocating capital', function () {
-    DB::table('accounts')->insertOrIgnore([
-        ['code' => '1000', 'name' => 'Cash & Bank', 'type' => 'asset', 'is_system' => true, 'is_active' => true, 'created_at' => now(), 'updated_at' => now()],
-        ['code' => '1100', 'name' => 'Loans Receivable', 'type' => 'asset', 'is_system' => true, 'is_active' => true, 'created_at' => now(), 'updated_at' => now()],
-    ]);
-
+test('pool capital allocation cannot exceed available cleared capital', function () {
     $actor = impactSuperAdmin();
 
-    app(SettingsService::class)->put('deposit.min_allocation_amount', '25000', $actor, 'Minimum allocation line');
-
     $investor = Investor::factory()->create();
-
     $investor->deposits()->create([
-        'amount' => '100000',
+        'amount' => '50000',
         'status' => DepositStatus::Cleared,
         'deposited_at' => now()->toDateString(),
         'created_by' => $actor->id,
     ]);
 
-    $loan = Loan::factory()->create(['principal_amount' => '100000']);
+    $loan = Loan::factory()->create(['principal_amount' => '100000', 'status' => LoanStatus::Pending]);
+    $loan->forceFill(['capital_verified_at' => now(), 'capital_verified_by' => $actor->id])->save();
 
-    expect(fn () => app(LoanFundingService::class)->allocateCapital($loan, [$investor->id => '10000'], $actor))
+    expect(fn () => app(LoanFundingService::class)->allocateFromPool($loan, $actor))
         ->toThrow(InvalidArgumentException::class);
 });
 

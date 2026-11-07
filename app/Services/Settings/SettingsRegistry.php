@@ -99,8 +99,7 @@ final class SettingsRegistry
             'deposit.min_allocation_amount' => ['group' => self::GROUP_DEPOSIT, 'type' => 'decimal', 'default' => '0', 'label' => 'Minimum allocation amount'],
 
             // Allocation settings.
-            'allocation.allow_manual' => ['group' => self::GROUP_ALLOCATION, 'type' => 'boolean', 'default' => true, 'label' => 'Allow manual loan allocation'],
-            'allocation.allow_partial' => ['group' => self::GROUP_ALLOCATION, 'type' => 'boolean', 'default' => true, 'label' => 'Allow partial allocation'],
+            'allocation.allow_partial' => ['group' => self::GROUP_ALLOCATION, 'type' => 'boolean', 'default' => true, 'label' => 'Allow capital to be drawn from multiple capital accounts (pool allocation)'],
             'allocation.allow_reallocation' => ['group' => self::GROUP_ALLOCATION, 'type' => 'boolean', 'default' => true, 'label' => 'Allow reallocation'],
             'allocation.prevent_duplicate' => ['group' => self::GROUP_ALLOCATION, 'type' => 'boolean', 'default' => true, 'label' => 'Prevent duplicate allocation'],
 

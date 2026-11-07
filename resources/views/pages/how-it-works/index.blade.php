@@ -45,16 +45,9 @@ new #[Title('How it works')] class extends Component
                     'link' => 'Open loans',
                 ],
                 [
-                    'title' => 'Capital allocation',
-                    'owner' => 'Admin',
-                    'description' => 'Reserve each investor’s share against this loan. The total must match the approved principal exactly, and no investor can be allocated more than their available capital.',
-                    'route' => 'loans.index',
-                    'link' => 'Open loans',
-                ],
-                [
                     'title' => 'Funding confirmation',
-                    'owner' => 'System',
-                    'description' => 'At 100% the loan is marked fully funded, commitments become allocations and further funding changes are locked out automatically.',
+                    'owner' => 'Admin / System',
+                    'description' => 'Reserve the approved amount from the common available capital pool (cleared deposits net of active allocations). No investor is selected and no investor is linked to the borrower — capital is drawn from the pool exactly, and the loan locks at 100%.',
                     'route' => 'loans.index',
                     'link' => 'Open loans',
                 ],
@@ -362,7 +355,7 @@ new #[Title('How it works')] class extends Component
 
                 {{-- Row 2: funding and execution --}}
                 @foreach ([
-                    ['x' => 750, 'title' => 'Capital allocation', 'sub' => 'Exact 100% match', 'delay' => '1.2s'],
+                    ['x' => 750, 'title' => 'Funding confirmation', 'sub' => 'Pool reserved at 100%', 'delay' => '1.2s'],
                     ['x' => 510, 'title' => 'Final approval', 'sub' => 'Audited sign-off', 'delay' => '1.5s'],
                     ['x' => 270, 'title' => 'Disbursement', 'sub' => 'Bank reference recorded', 'delay' => '1.8s'],
                     ['x' => 30, 'title' => 'EMI collections', 'sub' => 'Principal first', 'delay' => '2.1s'],

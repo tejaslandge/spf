@@ -462,7 +462,7 @@
                             <div class="mt-4 rounded-xl bg-navy-900 p-4 text-white">
                                 <div class="flex items-center justify-between gap-4">
                                     <div>
-                                        <p class="text-[10px] font-medium uppercase tracking-wider text-white/50">{{ __('Capital allocation') }}</p>
+                                        <p class="text-[10px] font-medium uppercase tracking-wider text-white/50">{{ __('Funding confirmation') }}</p>
                                         <p class="mt-1 text-sm font-semibold tabular-nums">₹5,00,000 / ₹5,00,000</p>
                                     </div>
                                     <span class="text-xs font-semibold text-emerald-300">100%</span>

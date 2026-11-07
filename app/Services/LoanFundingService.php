@@ -11,6 +11,7 @@ use App\Enums\LoanFundingStatus;
 use App\Enums\LoanStatus;
 use App\Models\Investor;
 use App\Models\InvestorAllocation;
+use App\Models\InvestorDeposit;
 use App\Models\KycDocument;
 use App\Models\Loan;
 use App\Models\LoanFundingCommitment;
@@ -172,7 +173,50 @@ class LoanFundingService
             ->where('status', AllocationStatus::Active->value)
             ->sum('principal_amount');
 
-        return Money::round(Money::sub($deposited, $allocated));
+        $available = Money::sub($deposited, $allocated);
+
+        return Money::compare($available, '0') > 0 ? Money::round($available) : '0.00';
+    }
+
+    /**
+     * Total cleared capital across all investors, net of all active loan allocations.
+     * This is the common pool available for allocation to any eligible loan.
+     */
+    public function totalPoolAvailableCapital(): string
+    {
+        $cleared = (string) InvestorDeposit::query()
+            ->where('status', DepositStatus::Cleared->value)
+            ->sum('amount');
+
+        $allocated = (string) InvestorAllocation::query()
+            ->where('status', AllocationStatus::Active->value)
+            ->sum('principal_amount');
+
+        $available = Money::sub($cleared, $allocated);
+
+        return Money::compare($available, '0') > 0 ? Money::round($available) : '0.00';
+    }
+
+    /**
+     * @return array{total_cleared: string, total_allocated: string, total_available: string}
+     */
+    public function poolTotals(): array
+    {
+        $cleared = Money::round((string) InvestorDeposit::query()
+            ->where('status', DepositStatus::Cleared->value)
+            ->sum('amount'));
+
+        $allocated = Money::round((string) InvestorAllocation::query()
+            ->where('status', AllocationStatus::Active->value)
+            ->sum('principal_amount'));
+
+        $available = Money::sub($cleared, $allocated);
+
+        return [
+            'total_cleared' => $cleared,
+            'total_allocated' => $allocated,
+            'total_available' => Money::compare($available, '0') > 0 ? Money::round($available) : '0.00',
+        ];
     }
 
     /**
@@ -286,6 +330,201 @@ class LoanFundingService
 
             return $locked->refresh();
         });
+    }
+
+    /**
+     * Reserve capital from the common available capital pool for a loan.
+     *
+     * Capital is drawn from total cleared deposits net of active allocations across
+     * the platform. Allocation records are attributed across investor capital accounts
+     * automatically (no investor selection) to preserve investor exposure and payout
+     * reporting, while the admin workflow remains pool-based.
+     */
+    public function allocateFromPool(Loan $loan, User $actor): void
+    {
+        DB::transaction(function () use ($loan, $actor): void {
+            /** @var Loan $locked */
+            $locked = Loan::query()->lockForUpdate()->findOrFail($loan->getKey());
+
+            if (! $locked->application_status->allowsProcessing()) {
+                throw new InvalidArgumentException('The borrower must accept the loan offer before capital can be allocated.');
+            }
+
+            if ($locked->capital_verified_at === null) {
+                throw new InvalidArgumentException('Run investor capital verification before allocating capital.');
+            }
+
+            $this->ensureFundingOpen($locked);
+
+            if ($locked->allocations()->where('status', AllocationStatus::Active->value)->exists()) {
+                throw new InvalidArgumentException('Capital has already been allocated for this loan.');
+            }
+
+            $required = Money::round((string) $locked->principal_amount);
+            $poolAvailable = $this->totalPoolAvailableCapital();
+
+            if (Money::compare($required, $poolAvailable) > 0) {
+                throw new InvalidArgumentException(
+                    'Available capital '.Money::format($poolAvailable).' is insufficient for the approved amount '.Money::format($required).'.'
+                );
+            }
+
+            $investors = Investor::query()
+                ->where('status', InvestorStatus::Active->value)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            /** @var array<int, array{investor_id: int, amount: string, name: string}> $candidates */
+            $candidates = [];
+            $totalAvailable = '0.00';
+            $settings = app(SettingsService::class);
+
+            foreach ($investors as $investor) {
+                $available = $this->availableCapital($investor);
+
+                if (Money::compare($available, '0') <= 0) {
+                    continue;
+                }
+
+                try {
+                    $this->assertInvestorEligible($investor);
+                } catch (InvalidArgumentException) {
+                    continue;
+                }
+
+                $candidates[] = [
+                    'investor_id' => $investor->getKey(),
+                    'amount' => $available,
+                    'name' => $investor->name,
+                ];
+                $totalAvailable = Money::add($totalAvailable, $available);
+            }
+
+            if (Money::compare($required, $totalAvailable) > 0) {
+                throw new InvalidArgumentException(
+                    'Eligible available capital '.Money::format($totalAvailable).' is insufficient for the approved amount '.Money::format($required).'.'
+                );
+            }
+
+            if (! $settings->getBool('allocation.allow_partial', true)) {
+                $single = collect($candidates)
+                    ->filter(fn (array $candidate): bool => Money::compare($candidate['amount'], $required) >= 0)
+                    ->sortByDesc(fn (array $candidate): float => (float) $candidate['amount'])
+                    ->first();
+
+                if ($single === null) {
+                    throw new InvalidArgumentException(
+                        'Partial allocation is disabled. No single capital account covers the approved amount of '.Money::format($required).'.'
+                    );
+                }
+
+                $lines = [['investor_id' => $single['investor_id'], 'amount' => $required]];
+                $allocated = $required;
+
+                foreach ($lines as $line) {
+                    $locked->allocations()->create([
+                        'investor_id' => $line['investor_id'],
+                        'principal_amount' => $line['amount'],
+                        'allocation_date' => now()->toDateString(),
+                        'status' => AllocationStatus::Active,
+                        'notes' => 'Pool capital allocation for '.$locked->loan_code,
+                    ]);
+                }
+
+                $this->refreshFundingStatus($locked, $actor);
+
+                AuditLogger::log('capital.allocated', $locked, [], [
+                    'loan_id' => $locked->getKey(),
+                    'total' => $required,
+                    'pool_allocation' => true,
+                    'lines' => $lines,
+                ]);
+
+                return;
+            }
+
+            $minAllocation = $settings->getDecimal('deposit.min_allocation_amount', '0');
+            $allocated = '0.00';
+            $lines = [];
+            $count = count($candidates);
+
+            foreach ($candidates as $index => $candidate) {
+                if ($index === $count - 1) {
+                    $amount = Money::round(Money::sub($required, $allocated));
+                } else {
+                    $amount = Money::round(Money::div(Money::mul($required, $candidate['amount']), $totalAvailable));
+                    $remaining = Money::sub($required, $allocated);
+
+                    if (Money::compare($amount, $remaining) > 0) {
+                        $amount = Money::round($remaining);
+                    }
+                }
+
+                if (Money::compare($minAllocation, '0') > 0 && Money::compare($amount, '0') > 0 && Money::compare($amount, $minAllocation) < 0) {
+                    continue;
+                }
+
+                if (Money::compare($amount, '0') <= 0) {
+                    continue;
+                }
+
+                $lines[] = ['investor_id' => $candidate['investor_id'], 'amount' => $amount];
+                $allocated = Money::add($allocated, $amount);
+            }
+
+            if (Money::compare($allocated, $required) !== 0) {
+                $this->rebalancePoolLines($candidates, $required, $minAllocation, $lines, $allocated);
+            }
+
+            if ($lines === [] || Money::compare($allocated, $required) !== 0) {
+                throw new InvalidArgumentException('Capital could not be reserved from the available pool. Check allocation settings and available balances.');
+            }
+
+            foreach ($lines as $line) {
+                $locked->allocations()->create([
+                    'investor_id' => $line['investor_id'],
+                    'principal_amount' => $line['amount'],
+                    'allocation_date' => now()->toDateString(),
+                    'status' => AllocationStatus::Active,
+                    'notes' => 'Pool capital allocation for '.$locked->loan_code,
+                ]);
+            }
+
+            $this->refreshFundingStatus($locked, $actor);
+
+            AuditLogger::log('capital.allocated', $locked, [], [
+                'loan_id' => $locked->getKey(),
+                'total' => $required,
+                'pool_allocation' => true,
+                'lines' => $lines,
+            ]);
+        });
+    }
+
+    /**
+     * @param  array<int, array{investor_id: int, amount: string, name: string}>  $candidates
+     * @param  array<int, array{investor_id: int, amount: string}>  $lines
+     */
+    private function rebalancePoolLines(array $candidates, string $required, string $minAllocation, array &$lines, string &$allocated): void
+    {
+        $lines = [];
+        $allocated = '0.00';
+        $totalAvailable = array_reduce($candidates, fn (string $carry, array $c): string => Money::add($carry, $c['amount']), '0.00');
+        $count = count($candidates);
+
+        foreach (array_values($candidates) as $index => $candidate) {
+            $amount = $index === $count - 1
+                ? Money::round(Money::sub($required, $allocated))
+                : Money::round(Money::div(Money::mul($required, $candidate['amount']), $totalAvailable));
+
+            if (Money::compare($amount, '0') <= 0) {
+                continue;
+            }
+
+            $lines[] = ['investor_id' => $candidate['investor_id'], 'amount' => $amount];
+            $allocated = Money::add($allocated, $amount);
+        }
     }
 
     /**

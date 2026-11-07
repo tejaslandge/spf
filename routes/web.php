@@ -59,7 +59,6 @@ Route::middleware(['auth', 'role:super_admin,admin'])->group(function () {
     Route::livewire('loans/{loan}', 'pages::loans.show')->name('loans.show');
     Route::livewire('loans/{loan}/calculator', 'pages::loans.calculator')->name('loans.calculator');
     Route::livewire('loans/{loan}/capital-verification', 'pages::loans.capital-verification')->name('loans.capital-verification');
-    Route::livewire('loans/{loan}/capital-allocation', 'pages::loans.capital-allocation')->name('loans.capital-allocation');
     Route::livewire('loans/{loan}/disbursement', 'pages::loans.disbursement')->name('loans.disbursement');
 
     Route::livewire('collections', 'pages::collections.index')->name('collections.index');

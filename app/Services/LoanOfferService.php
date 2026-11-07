@@ -185,6 +185,7 @@ class LoanOfferService
 
         $loan->forceFill([
             'application_status' => ApplicationStatus::Rejected,
+            'status' => LoanStatus::Rejected,
             'notes' => trim(($loan->notes ? $loan->notes."\n" : '').'Rejected: '.$reason),
         ])->save();
 

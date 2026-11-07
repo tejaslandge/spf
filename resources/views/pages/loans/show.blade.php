@@ -409,8 +409,12 @@ new #[Title('Loan details')] class extends Component
             <div>
                 <div class="flex flex-wrap items-center gap-2">
                     <h2 class="text-xl font-semibold tracking-tight">{{ $loan->loan_code }}</h2>
-                    <x-status-badge :status="$loan->status" />
-                    <x-status-badge :status="$loan->application_status" />
+                    @if ($loan->status === \App\Enums\LoanStatus::Rejected || $loan->application_status === \App\Enums\ApplicationStatus::Rejected)
+                        <x-status-badge :status="\App\Enums\LoanStatus::Rejected" />
+                    @else
+                        <x-status-badge :status="$loan->status" />
+                        <x-status-badge :status="$loan->application_status" />
+                    @endif
                 </div>
                 <p class="mt-1 text-sm text-slate-500">
                     <a href="{{ route('borrowers.show', $loan->borrower) }}" class="font-medium text-blue-600 hover:text-blue-700">{{ $loan->borrower->full_name }}</a>
@@ -830,9 +834,9 @@ new #[Title('Loan details')] class extends Component
                             {{ __('Verify investor capital') }}
                         </a>
                     @else
-                        <a href="{{ route('loans.capital-allocation', $loan) }}" wire:navigate class="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-navy-900 bg-navy-900/5 px-3.5 py-2.5 text-xs font-semibold text-navy-900 transition hover:bg-navy-900/10">
-                            <flux:icon.puzzle-piece class="size-4" />
-                            {{ __('Allocate capital') }}
+                        <a href="{{ route('loans.capital-verification', $loan) }}" wire:navigate class="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-navy-900 bg-navy-900/5 px-3.5 py-2.5 text-xs font-semibold text-navy-900 transition hover:bg-navy-900/10">
+                            <flux:icon.banknotes class="size-4" />
+                            {{ __('Reserve capital from pool') }}
                         </a>
                     @endif
                 @elseif ($loan->funding_locked_at)

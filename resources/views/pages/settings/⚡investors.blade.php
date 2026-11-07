@@ -32,8 +32,6 @@ new #[Title('Investor & Deposit Settings')] class extends Component
 
     public string $minAllocationAmount = '0';
 
-    public bool $allowManual = true;
-
     public bool $allowPartial = true;
 
     public bool $allowReallocation = true;
@@ -57,7 +55,6 @@ new #[Title('Investor & Deposit Settings')] class extends Component
         $this->verificationRequired = $settings->getBool('deposit.verification_required', true);
         $this->allowReclearRejected = $settings->getBool('deposit.allow_reclear_rejected', false);
         $this->minAllocationAmount = $settings->getDecimal('deposit.min_allocation_amount', '0');
-        $this->allowManual = $settings->getBool('allocation.allow_manual', true);
         $this->allowPartial = $settings->getBool('allocation.allow_partial', true);
         $this->allowReallocation = $settings->getBool('allocation.allow_reallocation', true);
     }
@@ -78,7 +75,6 @@ new #[Title('Investor & Deposit Settings')] class extends Component
             'activationRequiresKyc' => ['boolean'],
             'verificationRequired' => ['boolean'],
             'allowReclearRejected' => ['boolean'],
-            'allowManual' => ['boolean'],
             'allowPartial' => ['boolean'],
             'allowReallocation' => ['boolean'],
             'reason' => ['required', 'string', 'min:5', 'max:500'],
@@ -99,7 +95,6 @@ new #[Title('Investor & Deposit Settings')] class extends Component
             'deposit.verification_required' => $validated['verificationRequired'],
             'deposit.allow_reclear_rejected' => $validated['allowReclearRejected'],
             'deposit.min_allocation_amount' => $validated['minAllocationAmount'],
-            'allocation.allow_manual' => $validated['allowManual'],
             'allocation.allow_partial' => $validated['allowPartial'],
             'allocation.allow_reallocation' => $validated['allowReallocation'],
         ], $actor, $validated['reason']);
@@ -223,12 +218,8 @@ new #[Title('Investor & Deposit Settings')] class extends Component
                     </div>
                     <div class="space-y-3 pt-1">
                         <label class="flex items-center gap-2 text-xs font-medium text-slate-600">
-                            <flux:switch wire:model="allowManual" />
-                            {{ __('Allow manual allocation from the investor profile') }}
-                        </label>
-                        <label class="flex items-center gap-2 text-xs font-medium text-slate-600">
                             <flux:switch wire:model="allowPartial" />
-                            {{ __('Allow partial allocation (multiple investors per loan)') }}
+                            {{ __('Allow capital to be drawn from multiple capital accounts (pool allocation)') }}
                         </label>
                         <label class="flex items-center gap-2 text-xs font-medium text-slate-600">
                             <flux:switch wire:model="allowReallocation" />
@@ -242,7 +233,7 @@ new #[Title('Investor & Deposit Settings')] class extends Component
                 </div>
 
                 <div class="mt-5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-[11px] leading-relaxed text-slate-500">
-                    {{ __('Allocation always requires cleared funds: available capital is cleared deposits minus active allocations. Changing these settings never rewrites existing allocations.') }}
+                    {{ __('Capital allocation uses the common available capital pool: available capital is total cleared deposits minus total active allocations. Investor and borrower records stay independent — no specific investor is selected for a loan. Changing these settings never rewrites existing allocations.') }}
                 </div>
             </div>
 

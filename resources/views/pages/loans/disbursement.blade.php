@@ -140,8 +140,8 @@ new #[Title('Disbursement')] class extends Component
                             <div class="mt-4 flex items-start gap-2 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-800">
                                 <flux:icon.exclamation-triangle class="mt-0.5 size-4 shrink-0" />
                                 <span>
-                                    {{ __('Pending Capital — this loan is only :percent% funded. Disbursement is blocked until investor capital allocation reaches 100%.', ['percent' => rtrim(rtrim(number_format($this->funding['percent'], 1), '0'), '.')]) }}
-                                    <a href="{{ route('loans.capital-allocation', $loan) }}" wire:navigate class="font-semibold underline">{{ __('Allocate capital') }}</a>
+                                    {{ __('Pending Capital — this loan is only :percent% funded. Disbursement is blocked until capital is reserved from the available pool (100%).', ['percent' => rtrim(rtrim(number_format($this->funding['percent'], 1), '0'), '.')]) }}
+                                    <a href="{{ route('loans.capital-verification', $loan) }}" wire:navigate class="font-semibold underline">{{ __('Reserve capital') }}</a>
                                 </span>
                             </div>
                         @endif

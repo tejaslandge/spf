@@ -20,7 +20,7 @@ The Finance & Capital Management System is an internal lending operations platfo
 
 1. A **borrower** is onboarded with KYC and applies for a loan.
 2. An **offer** is calculated with flat or reducing interest and accepted by the borrower.
-3. **Investor capital** is verified, committed and allocated against the approved loan.
+3. **Investor capital** verification is run against the common available capital pool (cleared deposits net of active allocations) and capital is reserved from that pool — without selecting a specific investor or linking investors to borrowers.
 4. The loan is **finally approved and disbursed** to the borrower.
 5. **EMIs** are collected, reconciled and posted to the ledger.
 6. **Investors** receive monthly interest payouts after management fee and TDS.
@@ -62,7 +62,7 @@ This system replaces those spreadsheets with one workflow, one ledger and one so
 
 ### 2.2 Success criteria
 
-- 100% of new loans follow the 11-step processing workflow.
+- 100% of new loans follow the 10-step processing workflow.
 - 0 disbursements against partially funded loans.
 - 0 investor payouts generated from uncollected interest.
 - Every journal entry balances to the paisa.
@@ -152,7 +152,7 @@ Daily lending operations.
 
 | Entity | Statuses |
 | --- | --- |
-| Loan | `pending`, `active`, `closed` |
+| Loan | `pending`, `active`, `closed`, `foreclosed`, `rejected` |
 | Application | `submitted`, `under_review`, `offer_generated`, `accepted`, `rejected`, `cancelled` |
 | Funding | `unfunded`, `partially_funded`, `fully_funded` |
 | Commitment | `confirmed`, `withdrawn`, `allocated` |
@@ -166,7 +166,7 @@ Daily lending operations.
 
 ## 5. Loan lifecycle
 
-Every loan follows the same 11-step workflow. The loan detail page shows the current step, the checklist, required documents, the valid action and what happens next.
+Every loan follows the same 10-step workflow. The loan detail page shows the current step, the checklist, required documents, the valid action and what happens next.
 
 ### Step 1 — Loan application
 
@@ -189,40 +189,33 @@ Every loan follows the same 11-step workflow. The loan detail page shows the cur
 
 ### Step 4 — Investor capital verification
 
-- The system totals **cleared** investor deposits, subtracts active allocations, and compares available capital with the approved amount.
+- Investor deposits that are `cleared`, minus active allocations platform-wide, form the **common available capital pool**.
+- The system totals cleared deposits, subtracts active allocations, and compares the available pool with the approved amount.
 - Pending or rejected deposits never count.
-- **Gate:** the verification report must exist before allocation.
-- **Output:** available capital per investor and any shortage.
+- **Gate:** the verification report must exist before funding is reserved.
+- **Output:** the available capital pool balance and any shortage.
 
-### Step 5 — Capital allocation
-
-- The admin enters each investor's contribution.
-- The total must equal the approved principal **exactly**.
-- No investor may be allocated more than their available capital.
-- **Gate:** active investors only, verified capital, funding still open.
-- **Output:** active `InvestorAllocation` records.
-
-### Step 6 — Funding confirmation
+### Step 5 — Funding confirmation
 
 - Reaching 100% marks the loan `fully_funded` and sets `funding_locked_at`.
-- Confirmed commitments become allocations and are marked `allocated`.
-- Further funding changes are blocked.
-- **Gate:** total commitments equal the approved amount.
+- Required capital is automatically drawn from the **common available capital pool** and attributed to loan capital records — no investor selection and no investor-to-borrower linking.
+- Further funding changes are blocked. Allocation beyond the available pool is rejected.
+- **Gate:** approved amount reserved exactly, funding locked.
 
-### Step 7 — Final approval
+### Step 6 — Final approval
 
 - An authorised admin reviews borrower details, investor allocations, agreement and bank account.
 - Final approval is an explicit, audited decision.
 - **Gate:** funding must be locked.
 
-### Step 8 — Disbursement
+### Step 7 — Disbursement
 
 - Payment is executed to the borrower's bank account.
 - The disbursement date, amount and transaction reference are recorded.
 - The loan becomes `active` and the EMI schedule is generated.
 - **Gate:** final approval, funding locked, valid date and reference.
 
-### Step 9 — EMI collection
+### Step 8 — EMI collection
 
 - EMIs are collected against the schedule.
 - The system supports full, partial and late payments.
@@ -230,13 +223,13 @@ Every loan follows the same 11-step workflow. The loan detail page shows the cur
 - The loan closes automatically when every instalment is settled.
 - **Gate:** active loan, valid payment method, reference required for non-cash payments, no future-dated collections.
 
-### Step 10 — Reconciliation
+### Step 9 — Reconciliation
 
 - Collected principal and interest are matched to investor allocations.
 - Investor payouts are based only on **interest actually collected**, never on scheduled or hypothetical interest.
 - Borrowers with overdue amounts remain in the daily operations queue.
 
-### Step 11 — Loan closure
+### Step 10 — Loan closure
 
 - Outstanding principal must be zero and all EMIs paid or waived.
 - Final borrower and investor statements are produced.
@@ -270,26 +263,24 @@ Existing investor records that were created before these rules must be completed
 ### 6.3 Available capital formula
 
 ```
-Available capital = Cleared deposits − Active allocations
+Available pool = Total cleared deposits − Total active allocations
+Available per investor = Investor cleared deposits − Investor active allocations
 ```
 
-Pending deposits, rejected deposits and released allocations are excluded.
+Pending deposits, rejected deposits and released allocations are excluded. Capital is drawn from the common pool regardless of which investor contributed the funds.
 
 ### 6.4 Commitments
 
-- A commitment reserves capital for one specific loan.
-- Only active investors may commit.
-- A commitment can be withdrawn while funding is still open.
-- Commitments are confirmed with an optional bank reference.
-- Once the loan is fully funded, commitments are locked and converted into allocations.
+- Commitments are retained for backward compatibility and historical reporting.
+- Once funding is reserved from the common pool, funding is locked and loan capital records are in place.
 
 ### 6.5 Allocation rules
 
-- Capital is allocated **after** verification and **before** final approval.
-- The allocated total must match the approved principal exactly.
-- Over-allocation per investor is rejected with the exact available amount.
+- Capital is reserved **after** verification and **before** final approval.
+- The reserved total must match the approved principal exactly.
+- Allocation is drawn from the **common available capital pool**; no specific investor is selected and no investor-to-borrower linking is required.
+- Over-allocation beyond the available pool is rejected; a loan cannot be reserved more than once.
 - Concurrency is controlled with database locks to prevent double allocation.
-- A loan can only be allocated once.
 
 ### 6.6 Investor payouts
 

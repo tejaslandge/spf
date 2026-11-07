@@ -164,7 +164,7 @@ function acceptOfferFor(Loan $loan): Loan
     return app(LoanOfferService::class)->accept($offer->refresh(), User::factory()->create());
 }
 
-test('capital allocation reserves the exact amount and locks funding', function () {
+test('pooled capital allocation reserves the exact amount and locks funding', function () {
     $this->seed(AccountingSeeder::class);
     $this->actingAs(User::factory()->create());
 
@@ -176,33 +176,32 @@ test('capital allocation reserves the exact amount and locks funding', function 
     $actor = auth()->user();
 
     // Cannot allocate before verification.
-    expect(fn () => $service->allocateCapital($loan, [999999 => '100000'], $actor))->toThrow(InvalidArgumentException::class);
+    expect(fn () => $service->allocateFromPool($loan, $actor))->toThrow(InvalidArgumentException::class);
 
     $service->markCapitalVerified($loan, $actor);
 
     $investorA = Investor::factory()->create();
     $investorB = Investor::factory()->create();
     depositTo($investorA, 60000);
-    depositTo($investorB, 50000);
+    depositTo($investorB, 30000);
     $loan = $loan->fresh();
 
-    // Investor A only has 60,000 available.
-    expect(fn () => $service->allocateCapital($loan, [$investorA->id => '70000'], $actor))
-        ->toThrow(InvalidArgumentException::class, 'only has');
+    // Pool is insufficient (90k available vs 100k required).
+    expect(fn () => $service->allocateFromPool($loan, $actor))
+        ->toThrow(InvalidArgumentException::class, 'insufficient');
 
-    // Total must match exactly.
-    expect(fn () => $service->allocateCapital($loan, [$investorA->id => '60000', $investorB->id => '30000'], $actor))
-        ->toThrow(InvalidArgumentException::class, 'exactly match');
+    depositTo($investorB, 20000);
+    $loan = $loan->fresh();
 
-    $service->allocateCapital($loan, [$investorA->id => '60000', $investorB->id => '40000'], $actor);
+    $service->allocateFromPool($loan, $actor);
 
     $loan->refresh();
 
     expect($loan->funding_status)->toBe(LoanFundingStatus::FullyFunded)
         ->and($loan->funding_locked_at)->not->toBeNull()
-        ->and($loan->allocations()->where('status', 'active')->count())->toBe(2)
+        ->and($loan->allocations()->where('status', 'active')->sum('principal_amount'))->toEqual('100000.00')
         // Double allocation is rejected (funding is locked once the loan is fully funded).
-        ->and(fn () => $service->allocateCapital($loan->fresh(), [$investorA->id => '60000'], $actor))
+        ->and(fn () => $service->allocateFromPool($loan->fresh(), $actor))
         ->toThrow(InvalidArgumentException::class, 'Funding is locked');
 });
 
@@ -222,7 +221,7 @@ test('disbursement requires verification, full funding and final approval', func
     $investor = Investor::factory()->create();
     depositTo($investor, 100000);
 
-    $service->allocateCapital($loan->fresh(), [$investor->id => '100000'], $actor);
+    $service->allocateFromPool($loan->fresh(), $actor);
     $loan = $loan->fresh();
 
     // Funded but not finally approved yet.
@@ -266,11 +265,11 @@ test('the workflow tracker reflects every processing stage', function () {
 
     $current = LoanWorkflow::current(LoanWorkflow::steps($loan->fresh()));
 
-    expect($current['key'])->toBe('capital_allocation');
+    expect($current['key'])->toBe('funding_confirmation');
 
     $investor = Investor::factory()->create();
     depositTo($investor, 100000);
-    $service->allocateCapital($loan->fresh(), [$investor->id => '100000'], $actor);
+    $service->allocateFromPool($loan->fresh(), $actor);
 
     $current = LoanWorkflow::current(LoanWorkflow::steps($loan->fresh()));
 
@@ -314,7 +313,7 @@ test('the loan calculator page generates an offer and records acceptance', funct
         ->and($loan->fresh()->schedules()->count())->toBe(10);
 });
 
-test('the capital pages verify and allocate for the loan', function () {
+test('the capital verification page verifies and reserves pool capital for the loan', function () {
     $this->seed(AccountingSeeder::class);
     $this->actingAs(User::factory()->create());
 
@@ -330,12 +329,12 @@ test('the capital pages verify and allocate for the loan', function () {
 
     expect($loan->fresh()->capital_verified_at)->not->toBeNull();
 
-    Livewire::test('pages::loans.capital-allocation', ['loan' => $loan->fresh()])
-        ->set('allocations.'.$investor->id, '100000')
-        ->call('allocate')
+    Livewire::test('pages::loans.capital-verification', ['loan' => $loan->fresh()])
+        ->call('reservePoolCapital')
         ->assertHasNoErrors();
 
     $loan->refresh();
 
-    expect($loan->funding_status)->toBe(LoanFundingStatus::FullyFunded);
+    expect($loan->funding_status)->toBe(LoanFundingStatus::FullyFunded)
+        ->and($loan->funding_locked_at)->not->toBeNull();
 });
