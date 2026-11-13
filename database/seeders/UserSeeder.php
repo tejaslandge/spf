@@ -15,11 +15,10 @@ class UserSeeder extends Seeder
             ['email' => 'superadmin@finance.test'],
             [
                 'name' => 'Super Admin',
-                'mobile' => '9000000001',
+                'mobile' => '8268639267',
                 'role' => UserRole::SuperAdmin,
                 'status' => 'active',
                 'email_verified_at' => now(),
-                'password' => Hash::make('password'),
             ],
         );
 
@@ -27,11 +26,10 @@ class UserSeeder extends Seeder
             ['email' => 'admin@finance.test'],
             [
                 'name' => 'Operations Admin',
-                'mobile' => '9000000002',
+                'mobile' => '9000781504',
                 'role' => UserRole::Admin,
                 'status' => 'active',
                 'email_verified_at' => now(),
-                'password' => Hash::make('password'),
             ],
         );
     }
