@@ -331,7 +331,7 @@
                                             required
                                             autofocus
                                             autocomplete="tel"
-                                            placeholder="721820585"
+                                            placeholder="9876543210"
                                             maxlength="15"
                                             class="h-11 w-full rounded-xl border border-zinc-300 bg-white px-3 text-sm text-navy-900 shadow-sm placeholder:text-zinc-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                                         />
