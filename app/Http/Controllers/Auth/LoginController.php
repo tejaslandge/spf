@@ -6,8 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\LoginRequest;
 use App\Models\User;
 use App\Services\Auth\LoginOtpService;
-use App\Services\Auth\RenflairSmsResult;
-use App\Services\Auth\RenflairSmsService;
+use App\Services\Auth\WhatsAppOtpResult;
+use App\Services\Auth\WhatsAppOtpService;
 use App\Services\Security\LoginAttemptService;
 use App\Support\PhoneNumber;
 use Illuminate\Http\RedirectResponse;
@@ -19,26 +19,39 @@ class LoginController extends Controller
 {
     public function showLogin(): View
     {
-        return view('pages::auth.login');
+        $config = require base_path('waapi.php');
+
+        return view('pages::auth.login', [
+            'defaultCountryCode' => (string) ($config['default_country_code'] ?? '91'),
+        ]);
     }
 
     /**
-     * Start a pending OTP challenge for the registered mobile number.
-     *
-     * The user is intentionally not authenticated here. Authentication only
-     * happens after the registered mobile number has been verified.
+     * Start a pending OTP challenge for the dynamically entered mobile number.
      */
     public function login(
         LoginRequest $request,
-        RenflairSmsService $sms,
+        WhatsAppOtpService $whatsapp,
         LoginOtpService $otp,
         LoginAttemptService $attempts,
     ): RedirectResponse {
-        $login = (string) $request->input('mobile');
+        $waapi = $whatsapp->config();
+        $countryCode = preg_replace('/\D+/', '', (string) ($request->input('country_code') ?: $waapi['default_country_code'])) ?: $waapi['default_country_code'];
+        $input = trim((string) $request->input('mobile'));
+        $phone = PhoneNumber::forWhatsAppApi(($countryCode !== '' ? $countryCode : '').$input, $waapi['default_country_code'])
+            ?? PhoneNumber::forWhatsAppApi($input, $waapi['default_country_code']);
         $remember = $request->boolean('remember');
 
-        if ($attempts->isLocked($login, $request->ip())) {
-            $lockedUntil = $attempts->lockedUntil($login, $request->ip());
+        if ($phone === null) {
+            throw ValidationException::withMessages([
+                'mobile' => __('Please enter a valid mobile number.'),
+            ]);
+        }
+
+        $identifier = $phone;
+
+        if ($attempts->isLocked($identifier, $request->ip())) {
+            $lockedUntil = $attempts->lockedUntil($identifier, $request->ip());
             $minutes = $lockedUntil !== null
                 ? max(1, (int) ceil(now()->diffInMinutes($lockedUntil, true)))
                 : $attempts->lockoutMinutes();
@@ -49,51 +62,46 @@ class LoginController extends Controller
         }
 
         $user = User::query()
-            ->whereIn('mobile', array_unique([$login, '91'.$login, '+91'.$login]))
+            ->where('status', 'active')
+            ->whereIn('mobile', PhoneNumber::equivalentValues($phone, $waapi['default_country_code']))
             ->first();
 
-        if (! $user || $user->status !== 'active') {
-            $attempts->recordFailure($login, $request->ip());
+        if (! $user) {
+            $attempts->recordFailure($identifier, $request->ip());
 
             throw ValidationException::withMessages([
                 'mobile' => __('auth.failed'),
             ]);
         }
 
-        $phone = PhoneNumber::national($user->mobile);
+        $attempts->clear($identifier, $request->ip());
 
-        if ($phone === null) {
-            throw ValidationException::withMessages([
-                'mobile' => __('This account is not set up for mobile verification. Please contact your administrator.'),
-            ]);
-        }
-
-        $attempts->clear($login, $request->ip());
-
-        $code = $otp->start($user, $remember);
+        $code = $otp->start($user, $remember, $phone);
         $otp->logCode($code);
 
-        $result = $sms->sendOtp($phone, $code);
+        $result = $whatsapp->sendOtp($phone, $code);
 
         if (! $result->successful) {
-            // Keep the challenge alive so the code from the log can still be
-            // used when the gateway is unavailable or not configured.
-            $canReadLog = (bool) config('services.renflair.log_otp', false);
+            $otp->clear();
 
-            $message = match (true) {
-                $result->reason === RenflairSmsResult::NOT_CONFIGURED && $canReadLog => __('SMS delivery is not configured. Check the application log for your verification code.'),
-                $result->reason === RenflairSmsResult::NOT_CONFIGURED => __('Mobile verification is not configured. Please contact your administrator.'),
-                $canReadLog => __('We could not send the SMS right now. Check the application log for your verification code.'),
-                default => __('We could not send a verification code right now. Please try again in a moment.'),
-            };
-
-            if ($result->reason === RenflairSmsResult::NOT_CONFIGURED) {
-                Log::warning('Renflair SMS is not configured; the login OTP was not delivered.');
+            if ($result->reason === WhatsAppOtpResult::UNAUTHORIZED) {
+                throw ValidationException::withMessages([
+                    'mobile' => $result->message ?: __('This number is not authorized to receive OTPs.'),
+                ]);
             }
 
-            return redirect()->route('login.otp')->withErrors(['sms' => $message]);
+            $message = match ($result->reason) {
+                WhatsAppOtpResult::NOT_CONFIGURED => __('Mobile verification is not configured. Please contact your administrator.'),
+                default => $result->message ?: __('We could not send a verification code right now. Please try again in a moment.'),
+            };
+
+            if ($result->reason === WhatsAppOtpResult::NOT_CONFIGURED) {
+                Log::warning('WhatsApp OTP API is not configured; the login OTP was not delivered.');
+            }
+
+            return redirect()->route('login')->withInput($request->only('country_code', 'mobile', 'remember'))->withErrors(['mobile' => $message]);
         }
 
-        return redirect()->route('login.otp');
+        return redirect()->route('login.otp')->with('status', __('A verification code has been sent to your WhatsApp number.'));
     }
 }

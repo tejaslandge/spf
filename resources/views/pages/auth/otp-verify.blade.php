@@ -82,7 +82,7 @@
                             <div class="min-w-0">
                                 <h1 class="text-xl font-semibold tracking-tight text-navy-900 sm:text-2xl">{{ __('Verify your mobile number') }}</h1>
                                 <p class="mt-1 text-sm leading-relaxed text-zinc-500">
-                                    {{ __('We sent a 6-digit code to the number registered on your account.') }}
+                                    {{ __('We sent a 6-digit code to the WhatsApp number you entered.') }}
                                 </p>
                             </div>
                         </div>
@@ -94,7 +94,7 @@
                                     <flux:icon.signal class="size-4" />
                                 </span>
                                 <div>
-                                    <p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{{ __('Registered mobile') }}</p>
+                                    <p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{{ __('Mobile number') }}</p>
                                     <p class="font-mono text-sm font-semibold tracking-wide text-navy-900">{{ $maskedPhone }}</p>
                                 </div>
                             </div>
@@ -187,7 +187,7 @@
 
                         <p class="mt-4 flex items-start gap-1.5 rounded-xl bg-slate-50 px-3 py-2.5 text-[11px] leading-relaxed text-slate-500">
                             <flux:icon.shield-check class="mt-px size-3.5 shrink-0 text-emerald-600" />
-                            <span>{{ __('The code is sent only to the mobile number registered with this account. It expires in 5 minutes.') }}</span>
+                            <span>{{ __('The code is sent to the exact mobile number you entered (subject to API authorization). It expires in 5 minutes and can be used once.') }}</span>
                         </p>
                     </div>
                 </div>

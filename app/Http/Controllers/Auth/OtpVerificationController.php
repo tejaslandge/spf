@@ -5,7 +5,8 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\VerifyOtpRequest;
 use App\Services\Auth\LoginOtpService;
-use App\Services\Auth\RenflairSmsService;
+use App\Services\Auth\WhatsAppOtpResult;
+use App\Services\Auth\WhatsAppOtpService;
 use App\Support\PhoneNumber;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Auth;
@@ -78,12 +79,15 @@ class OtpVerificationController extends Controller
         }
 
         $remember = $otp->remember();
+        $verifiedPhone = $phone;
 
+        $otp->markUsed();
         $otp->clear();
         $request->session()->forget(['login.id', 'login.remember']);
 
         Auth::login($user, $remember);
         $request->session()->regenerate();
+        $request->session()->put('verified_phone', $verifiedPhone);
 
         $user->forceFill(['last_login_at' => now()])->save();
 
@@ -92,7 +96,7 @@ class OtpVerificationController extends Controller
 
     public function resend(
         LoginOtpService $otp,
-        RenflairSmsService $sms,
+        WhatsAppOtpService $whatsapp,
     ): RedirectResponse {
         if (! $otp->exists()) {
             return $this->restart(__('Please sign in to request a verification code.'));
@@ -121,8 +125,6 @@ class OtpVerificationController extends Controller
             return $this->restart(__('This account can no longer complete sign-in. Please sign in again.'));
         }
 
-        // Keep the previous challenge so a gateway failure does not invalidate
-        // a code the user may already have received.
         $previous = $otp->snapshot();
         $code = $otp->regenerate();
         $phone = $otp->phone();
@@ -133,19 +135,25 @@ class OtpVerificationController extends Controller
             return $this->restart(__('Please sign in to request a verification code.'));
         }
 
-        $result = $sms->sendOtp($phone, $code);
+        $result = $whatsapp->sendOtp($phone, $code);
 
         if (! $result->successful) {
             $otp->restore($previous);
 
+            $message = match ($result->reason) {
+                WhatsAppOtpResult::UNAUTHORIZED => $result->message ?: __('This number is not authorized to receive OTPs.'),
+                WhatsAppOtpResult::NOT_CONFIGURED => __('Mobile verification is not configured. Please contact your administrator.'),
+                default => $result->message ?: __('We could not resend a verification code right now. Please try again in a moment.'),
+            };
+
             throw ValidationException::withMessages([
-                'resend' => __('We could not resend a verification code right now. Please try again in a moment.'),
+                'resend' => $message,
             ]);
         }
 
         $otp->logCode($code);
 
-        return back()->with('status', __('A new verification code has been sent to your registered mobile number.'));
+        return back()->with('status', __('A new verification code has been sent to your WhatsApp number.'));
     }
 
     public function cancel(LoginOtpService $otp): RedirectResponse

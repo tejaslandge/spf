@@ -306,19 +306,39 @@
                         <form id="login-form" method="POST" action="{{ route('login.store') }}" class="mt-6 flex flex-col gap-5" novalidate>
                             @csrf
 
-                            <flux:input
-                                name="mobile"
-                                :label="__('Mobile number')"
-                                :value="old('mobile')"
-                                type="tel"
-                                inputmode="numeric"
-                                required
-                                autofocus
-                                autocomplete="tel-national"
-                                placeholder="9876543210"
-                                maxlength="10"
-                                icon="device-phone-mobile"
-                            />
+                            <div class="space-y-1.5">
+                                <label for="mobile" class="block text-sm font-medium text-zinc-700">{{ __('WhatsApp mobile number') }}</label>
+                                <div class="flex gap-2">
+                                    <div class="w-28 shrink-0">
+                                        <label for="country_code" class="sr-only">{{ __('Country code') }}</label>
+                                        <select
+                                            id="country_code"
+                                            name="country_code"
+                                            class="h-11 w-full rounded-xl border border-zinc-300 bg-white px-3 text-sm font-medium text-navy-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                                        >
+                                            @foreach (['91' => '+91 (India)', '1' => '+1', '44' => '+44', '61' => '+61', '971' => '+971'] as $code => $label)
+                                                <option value="{{ $code }}" @selected(old('country_code', $defaultCountryCode ?? '91') == $code)>{{ $label }}</option>
+                                            @endforeach
+                                        </select>
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <input
+                                            id="mobile"
+                                            name="mobile"
+                                            value="{{ old('mobile') }}"
+                                            type="tel"
+                                            inputmode="numeric"
+                                            required
+                                            autofocus
+                                            autocomplete="tel"
+                                            placeholder="721820585"
+                                            maxlength="15"
+                                            class="h-11 w-full rounded-xl border border-zinc-300 bg-white px-3 text-sm text-navy-900 shadow-sm placeholder:text-zinc-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                                        />
+                                    </div>
+                                </div>
+                                <p class="text-[11px] leading-relaxed text-zinc-500">{{ __('Enter the WhatsApp mobile number that should receive the OTP. Default country code is +91.') }}</p>
+                            </div>
 
                             <div class="flex items-center justify-between gap-4">
                                 <flux:checkbox name="remember" :label="__('Remember me')" :checked="old('remember')" />
@@ -331,7 +351,7 @@
                                 class="group relative inline-flex h-11 w-full items-center justify-center gap-2 overflow-hidden rounded-xl bg-emerald-600 text-sm font-semibold text-white shadow-lg shadow-emerald-600/25 transition hover:bg-emerald-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 active:scale-[0.99]"
                             >
                                 <span class="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 to-transparent transition duration-700 group-hover:translate-x-full"></span>
-                                <span class="relative" data-login-label>{{ __('Send verification code') }}</span>
+                                <span class="relative" data-login-label>{{ __('Send OTP on WhatsApp') }}</span>
                                 <flux:icon.arrow-right class="relative size-4 transition group-hover:translate-x-0.5" />
                             </button>
 

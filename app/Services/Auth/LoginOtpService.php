@@ -2,6 +2,7 @@
 
 namespace App\Services\Auth;
 
+use App\Models\LoginOtp as LoginOtpModel;
 use App\Models\User;
 use App\Support\PhoneNumber;
 use Illuminate\Support\Facades\Hash;
@@ -9,13 +10,10 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
- * Server-side pending login challenge stored in the session.
+ * DB-backed pending login challenge for dynamic WhatsApp OTP verification.
  *
- * The user is deliberately not authenticated until the mobile OTP has been
- * verified. The challenge holds the pending user id, the registered phone
- * number, a hash of the generated code and the attempt/expiry counters. No
- * phone number is ever read from the OTP form and the plaintext code only
- * lives in memory long enough to be handed to the SMS gateway.
+ * The challenge stores only a secure OTP hash, is bound to the exact entered
+ * phone number, expires after 5 minutes, and cannot be reused after success.
  */
 final class LoginOtpService
 {
@@ -28,36 +26,35 @@ final class LoginOtpService
     public const MAX_ATTEMPTS = 5;
 
     /**
-     * Create a new challenge and return the plaintext code for delivery.
+     * Create a new challenge for a dynamic phone number and return the plaintext OTP.
      */
-    public function start(User $user, bool $remember): string
+    public function start(?User $user, bool $remember, ?string $phone = null): string
     {
-        $phone = PhoneNumber::national($user->mobile);
+        $apiPhone = $this->normalizeApiPhone($phone ?? $user?->mobile);
         $code = $this->generateCode();
+        $challengeId = (string) Str::uuid();
 
-        session([self::SESSION_KEY => [
-            'id' => Str::random(40),
-            'user_id' => $user->getKey(),
-            'phone' => $phone,
-            'remember' => $remember,
+        $record = LoginOtpModel::query()->create([
+            'challenge_id' => $challengeId,
+            'phone' => $apiPhone,
+            'user_id' => $user?->getKey(),
             'otp_hash' => Hash::make($code),
+            'expires_at' => now()->addSeconds(self::EXPIRES_AFTER_SECONDS),
+            'last_sent_at' => now(),
+            'resend_available_at' => now()->addSeconds(self::RESEND_COOLDOWN_SECONDS),
             'attempts' => 0,
-            'sent_at' => now()->getTimestamp(),
-            'expires_at' => now()->addSeconds(self::EXPIRES_AFTER_SECONDS)->getTimestamp(),
-        ]]);
+            'used_at' => null,
+            'remember' => $remember,
+        ]);
+
+        $this->storeSession($record);
 
         return $code;
     }
 
-    /**
-     * Write the plaintext code to the application log when explicitly enabled.
-     *
-     * This exists for local development and gateway troubleshooting. It is
-     * disabled by default so production never writes OTPs to disk.
-     */
     public function logCode(string $code): void
     {
-        if (! config('services.renflair.log_otp', false)) {
+        if (! (bool) (config('services.renflair.log_otp', false) || config('services.whatsapp.log_otp', false))) {
             return;
         }
 
@@ -67,48 +64,60 @@ final class LoginOtpService
         ]);
     }
 
-    /**
-     * Replace the current code with a fresh one, invalidating the previous code.
-     *
-     * Returns the plaintext code to deliver, or null when the challenge is gone.
-     */
     public function regenerate(): ?string
     {
-        $user = $this->user();
+        $record = $this->record();
 
-        if ($user === null) {
+        if ($record === null || $record->isUsed()) {
             $this->clear();
 
             return null;
         }
 
-        return $this->start($user, $this->remember());
+        $user = $record->user_id ? $record->user()->first() : null;
+
+        return $this->start($user, $record->remember, $record->phone);
     }
 
-    /**
-     * Compare a submitted code against the hashed code in the challenge.
-     */
     public function verify(string $code): bool
     {
-        $hash = $this->get()['otp_hash'] ?? null;
+        $record = $this->record();
 
-        if (! is_string($hash) || $hash === '') {
+        if ($record === null || $record->isUsed() || $record->isExpired()) {
             return false;
         }
 
-        return Hash::check($code, $hash);
+        return Hash::check($code, $record->otp_hash);
+    }
+
+    public function markUsed(): void
+    {
+        $record = $this->record();
+
+        if ($record === null || $record->isUsed()) {
+            return;
+        }
+
+        $record->forceFill(['used_at' => now()])->save();
     }
 
     /**
-     * Capture the raw challenge so a failed resend can restore it.
-     *
      * @return array<string, mixed>|null
      */
     public function snapshot(): ?array
     {
-        $challenge = session(self::SESSION_KEY);
+        $session = session(self::SESSION_KEY);
+        $record = $this->record();
 
-        return is_array($challenge) ? $challenge : null;
+        if (! is_array($session) || $record === null) {
+            return null;
+        }
+
+        return [
+            'session' => $session,
+            'record' => $record->replicate()->getAttributes(),
+            'record_id' => $record->getKey(),
+        ];
     }
 
     /**
@@ -122,91 +131,88 @@ final class LoginOtpService
             return;
         }
 
-        session([self::SESSION_KEY => $challenge]);
-    }
+        $recordId = $challenge['record_id'] ?? null;
+        $attributes = $challenge['record'] ?? null;
 
-    /**
-     * @return array{id: string, user_id: int|string, phone: ?string, remember: bool, otp_hash: string, attempts: int, sent_at: int, expires_at: int}|null
-     */
-    public function get(): ?array
-    {
-        $challenge = session(self::SESSION_KEY);
+        if ($recordId && is_array($attributes)) {
+            $record = LoginOtpModel::query()->find($recordId);
 
-        if (! is_array($challenge)
-            || ! isset($challenge['user_id'], $challenge['expires_at'], $challenge['id'], $challenge['otp_hash'])) {
-            return null;
+            if ($record !== null) {
+                $record->forceFill($attributes)->save();
+                session([self::SESSION_KEY => $challenge['session'] ?? ['id' => $record->challenge_id, 'phone' => $record->phone]]);
+                session(['auth.login_phone' => $record->phone]);
+
+                return;
+            }
         }
 
-        return [
-            'id' => (string) $challenge['id'],
-            'user_id' => $challenge['user_id'],
-            'phone' => isset($challenge['phone']) && is_string($challenge['phone']) ? $challenge['phone'] : null,
-            'remember' => (bool) ($challenge['remember'] ?? false),
-            'otp_hash' => (string) $challenge['otp_hash'],
-            'attempts' => (int) ($challenge['attempts'] ?? 0),
-            'sent_at' => (int) ($challenge['sent_at'] ?? 0),
-            'expires_at' => (int) $challenge['expires_at'],
-        ];
+        $this->clear();
     }
 
     public function exists(): bool
     {
-        return $this->get() !== null;
+        return $this->record() !== null;
     }
 
     public function user(): ?User
     {
-        $challenge = $this->get();
+        $record = $this->record();
 
-        if ($challenge === null) {
+        if ($record === null) {
             return null;
         }
 
-        return User::query()->find($challenge['user_id']);
+        if ($record->user_id) {
+            return $record->user()->first();
+        }
+
+        return User::query()
+            ->whereIn('mobile', PhoneNumber::equivalentValues($record->phone))
+            ->first();
     }
 
     public function phone(): ?string
     {
-        return $this->get()['phone'] ?? null;
+        return $this->record()?->phone ?? session('auth.login_phone');
     }
 
     public function remember(): bool
     {
-        return (bool) ($this->get()['remember'] ?? false);
+        return (bool) ($this->record()?->remember ?? false);
     }
 
     public function isExpired(): bool
     {
-        $challenge = $this->get();
+        $record = $this->record();
 
-        return $challenge === null || $challenge['expires_at'] <= now()->getTimestamp();
+        return $record === null || $record->isExpired();
     }
 
     public function secondsUntilExpiry(): int
     {
-        $challenge = $this->get();
+        $record = $this->record();
 
-        if ($challenge === null) {
+        if ($record === null || $record->expires_at === null) {
             return 0;
         }
 
-        return max(0, $challenge['expires_at'] - now()->getTimestamp());
+        return max(0, now()->diffInSeconds($record->expires_at, false));
     }
 
     public function secondsUntilResend(): int
     {
-        $challenge = $this->get();
+        $record = $this->record();
 
-        if ($challenge === null) {
+        if ($record === null || $record->resend_available_at === null) {
             return 0;
         }
 
-        return max(0, ($challenge['sent_at'] + self::RESEND_COOLDOWN_SECONDS) - now()->getTimestamp());
+        return max(0, now()->diffInSeconds($record->resend_available_at, false));
     }
 
     public function attempts(): int
     {
-        return (int) ($this->get()['attempts'] ?? 0);
+        return (int) ($this->record()?->attempts ?? 0);
     }
 
     public function remainingAttempts(): int
@@ -221,26 +227,69 @@ final class LoginOtpService
 
     public function recordFailedAttempt(): int
     {
-        $challenge = $this->get();
+        $record = $this->record();
 
-        if ($challenge === null) {
+        if ($record === null) {
             return 0;
         }
 
-        $challenge['attempts']++;
+        $record->forceFill(['attempts' => $record->attempts + 1])->save();
 
-        session([self::SESSION_KEY => $challenge]);
-
-        return $challenge['attempts'];
+        return (int) $record->attempts;
     }
 
     public function clear(): void
     {
-        session()->forget(self::SESSION_KEY);
+        $record = $this->record();
+
+        if ($record !== null && ! $record->isUsed()) {
+            $record->forceFill(['used_at' => now()])->save();
+        }
+
+        session()->forget([self::SESSION_KEY, 'auth.login_phone']);
     }
 
     private function generateCode(): string
     {
         return (string) random_int(100000, 999999);
+    }
+
+    private function normalizeApiPhone(?string $value): string
+    {
+        $config = require base_path('waapi.php');
+        $default = (string) ($config['default_country_code'] ?? '91');
+        $phone = PhoneNumber::forWhatsAppApi($value, $default);
+
+        if ($phone === null) {
+            throw new \InvalidArgumentException('A valid phone number is required for OTP delivery.');
+        }
+
+        return $phone;
+    }
+
+    private function storeSession(LoginOtpModel $record): void
+    {
+        session([
+            self::SESSION_KEY => [
+                'id' => $record->challenge_id,
+                'phone' => $record->phone,
+                'user_id' => $record->user_id,
+                'remember' => (bool) $record->remember,
+            ],
+            'auth.login_phone' => $record->phone,
+        ]);
+    }
+
+    private function record(): ?LoginOtpModel
+    {
+        $session = session(self::SESSION_KEY);
+
+        if (! is_array($session) || ! isset($session['id'])) {
+            return null;
+        }
+
+        return LoginOtpModel::query()
+            ->where('challenge_id', (string) $session['id'])
+            ->first();
     }
 }
